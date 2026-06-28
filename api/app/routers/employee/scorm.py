@@ -258,6 +258,8 @@ def _cmi_to_dict(cmi: ScormCmiData) -> dict:
         d["cmi.suspend_data"] = cmi.suspend_data
     if cmi.location:
         d["cmi.location"] = cmi.location
+    if cmi.progress_measure is not None:
+        d["cmi.progress_measure"] = str(cmi.progress_measure)
     d["cmi.entry"] = cmi.entry or "ab-initio"
     d["cmi.mode"]   = "normal"
     d["cmi.credit"] = "credit"
@@ -296,6 +298,11 @@ def _apply_cmi_dict(cmi: ScormCmiData, data: dict) -> None:
         cmi.suspend_data = data["cmi.suspend_data"]
     if "cmi.location" in data:
         cmi.location = data["cmi.location"]
+    if "cmi.progress_measure" in data:
+        try:
+            cmi.progress_measure = float(data["cmi.progress_measure"])
+        except (ValueError, TypeError):
+            pass
     if "cmi.exit" in data:
         cmi.exit = data["cmi.exit"]
         # Set entry for next launch

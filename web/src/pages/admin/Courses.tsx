@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { coursesApi, Course } from "../../api/admin";
+import { coursesApi, Course, disciplinesApi, levelsApi } from "../../api/admin";
 import { getErrorMessage } from "../../api/client";
 
 const STATUS_BADGE: Record<string, string> = {
@@ -20,6 +20,9 @@ export default function Courses() {
     queryKey: ["courses", page, filterStatus],
     queryFn: () => coursesApi.list({ page, page_size: 20, status: filterStatus || undefined }),
   });
+
+  const { data: disciplines } = useQuery({ queryKey: ["disciplines"], queryFn: () => disciplinesApi.list(1, 100) });
+  const { data: levels } = useQuery({ queryKey: ["levels"], queryFn: () => levelsApi.list(1, 100) });
 
   const archiveMut = useMutation({
     mutationFn: (id: number) => coursesApi.archive(id),
@@ -61,6 +64,7 @@ export default function Courses() {
                   <th>Title</th>
                   <th>Status</th>
                   <th>Mandatory</th>
+                  <th>Target Audience</th>
                   <th>Duration</th>
                   <th>Created</th>
                   <th style={{ width: 160 }}>Actions</th>
@@ -77,6 +81,29 @@ export default function Courses() {
                       {c.mandatory
                         ? <span className="badge badge-red">Mandatory</span>
                         : <span className="badge badge-gray">Optional</span>}
+                    </td>
+                    <td>
+                      {(() => {
+                        if (!c.targets || c.targets.length === 0) {
+                          return <span style={{ color: "var(--text-muted)", fontStyle: "italic", fontSize: 11 }}>No targets (Hidden)</span>;
+                        }
+                        const byDiscipline: Record<string, string[]> = {};
+                        c.targets.forEach(t => {
+                          const discName = disciplines?.items.find(d => d.id === t.discipline_id)?.name ?? `Dept ${t.discipline_id}`;
+                          const lvlCode = levels?.items.find(l => l.id === t.level_id)?.code ?? `L${t.level_id}`;
+                          if (!byDiscipline[discName]) byDiscipline[discName] = [];
+                          byDiscipline[discName].push(lvlCode);
+                        });
+                        return (
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                            {Object.entries(byDiscipline).map(([disc, lvls]) => (
+                              <span key={disc} className="badge badge-gray" style={{ fontSize: 10, padding: "2px 6px" }}>
+                                <strong>{disc}</strong> ({lvls.join(", ")})
+                              </span>
+                            ))}
+                          </div>
+                        );
+                      })()}
                     </td>
                     <td style={{ color: "var(--text-muted)", fontSize: 12 }}>
                       {c.duration_days ? `${c.duration_days}d` : "—"}
@@ -103,7 +130,7 @@ export default function Courses() {
                   </tr>
                 ))}
                 {data?.items.length === 0 && (
-                  <tr><td colSpan={6} style={{ color: "var(--text-muted)", textAlign: "center" }}>No courses yet</td></tr>
+                  <tr><td colSpan={7} style={{ color: "var(--text-muted)", textAlign: "center" }}>No courses yet</td></tr>
                 )}
               </tbody>
             </table>

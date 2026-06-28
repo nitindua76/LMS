@@ -63,6 +63,21 @@ export default function SectionPlayer() {
   const pdfTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
+  const [iframeUrl, setIframeUrl] = useState<string>("");
+  const lastLoadedItemIdRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (item?.url) {
+      if (lastLoadedItemIdRef.current !== item.id) {
+        lastLoadedItemIdRef.current = item.id;
+        setIframeUrl(item.url);
+      }
+    } else {
+      lastLoadedItemIdRef.current = null;
+      setIframeUrl("");
+    }
+  }, [item?.id, item?.url]);
+
   // Dynamic layout locking to remove duplicate page scrollbars and maximize player viewport
   useEffect(() => {
     const layoutMain = document.querySelector(".layout-main") as HTMLElement;
@@ -94,7 +109,7 @@ export default function SectionPlayer() {
         }
       }
     }
-  }, [section?.id]);
+  }, [section?.id, section?.content_done, section?.quiz_passed, section?.has_quiz]);
 
   // VIDEO HEARTBEAT
   useEffect(() => {
@@ -226,20 +241,15 @@ export default function SectionPlayer() {
     const handler = (e: MessageEvent) => {
       if (e.data?.type === "scorm_terminated") {
         refetchProgress();
-        if (e.data.section_complete) {
-          queryClient.invalidateQueries({ queryKey: ["my-course", cId] });
-          setScormComplete(true);
-          if (section?.has_quiz) setPhase("quiz");
-          else setPhase("done");
-        }
-      } else if (e.data?.type === "scorm_commit_quiz") {
+        queryClient.invalidateQueries({ queryKey: ["my-course", cId] });
+      } else if (e.data?.type === "scorm_commit_quiz" || e.data?.type === "scorm_committed") {
         refetchProgress();
         queryClient.invalidateQueries({ queryKey: ["my-course", cId] });
       }
     };
     window.addEventListener("message", handler);
     return () => window.removeEventListener("message", handler);
-  }, [item?.id, refetchProgress, cId, section?.has_quiz, queryClient]);
+  }, [item?.id, refetchProgress, cId, queryClient]);
 
   const handleMarkPdfRead = async () => {
     if (!item || !eId || !sId) return;
@@ -300,14 +310,14 @@ export default function SectionPlayer() {
   };
 
   const getIframeUrl = () => {
-    if (!item?.url) return "";
-    if (!activeSco) return item.url;
+    if (!iframeUrl) return "";
+    if (!activeSco) return iframeUrl;
     try {
-      const urlObj = new URL(item.url);
+      const urlObj = new URL(iframeUrl);
       urlObj.searchParams.set("sco", activeSco);
       return urlObj.toString();
     } catch {
-      return item.url;
+      return iframeUrl;
     }
   };
 

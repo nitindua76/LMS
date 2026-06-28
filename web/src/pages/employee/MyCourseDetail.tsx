@@ -37,7 +37,7 @@ export default function MyCourseDetail() {
   const isStartable = !isLocked && !course.enrollment_id;
   const isEnrolled = !!course.enrollment_id;
 
-  const sectionStatus = (s: typeof course.sections[0] & { has_started?: boolean }) => {
+  const sectionStatus = (s: typeof course.sections[0] & { has_started?: boolean; scorm_pct?: number | null }) => {
     if (s.completed_at) return { label: "Complete", color: "var(--success)" };
     if (s.locked) return { label: "Locked", color: "var(--text-muted)" };
     if (s.has_started) return { label: "In Progress", color: "var(--primary)" };
@@ -66,9 +66,34 @@ export default function MyCourseDetail() {
         </div>
       )}
 
-      {course.intro && (
-        <div className="card" style={{ marginBottom: 24 }}>
-          <p style={{ color: "var(--text-muted)", lineHeight: 1.7 }}>{course.intro}</p>
+      {(course.intro || course.description) && (
+        <div className="card" style={{ marginBottom: 24, padding: "24px" }}>
+          <h2 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 16px", borderBottom: "1px solid var(--border)", paddingBottom: 8 }}>
+            About this Course
+          </h2>
+          {course.intro && (
+            <div style={{
+              fontSize: 14,
+              fontStyle: "italic",
+              color: "var(--text-muted)",
+              lineHeight: 1.6,
+              marginBottom: course.description ? 16 : 0,
+              paddingLeft: 12,
+              borderLeft: "3px solid var(--accent)"
+            }}>
+              {course.intro}
+            </div>
+          )}
+          {course.description && (
+            <div style={{
+              fontSize: 14,
+              color: "var(--text)",
+              lineHeight: 1.7,
+              whiteSpace: "pre-wrap"
+            }}>
+              {course.description}
+            </div>
+          )}
         </div>
       )}
 
@@ -126,6 +151,32 @@ export default function MyCourseDetail() {
                       </span>
                     ))}
                   </div>
+                  {/* SCORM progress bar — only for in-progress SCORM sections */}
+                  {!s.completed_at && !s.locked && (s as any).scorm_pct != null && (
+                    <div style={{ marginTop: 6 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <div style={{
+                          flex: 1,
+                          height: 5,
+                          borderRadius: 3,
+                          background: "var(--bg-elevated)",
+                          border: "1px solid var(--border)",
+                          overflow: "hidden",
+                        }}>
+                          <div style={{
+                            height: "100%",
+                            width: `${(s as any).scorm_pct}%`,
+                            background: (s as any).scorm_pct >= 100 ? "var(--success)" : "var(--primary)",
+                            borderRadius: 3,
+                            transition: "width 0.4s ease",
+                          }} />
+                        </div>
+                        <span style={{ fontSize: 10, fontWeight: 600, color: "var(--text-muted)", flexShrink: 0 }}>
+                          {(s as any).scorm_pct}%
+                        </span>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Status + action */}

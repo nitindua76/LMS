@@ -93,3 +93,4 @@ class CourseSummary(BaseModel):
     status: CourseStatus
     duration_days: Optional[int] = None
     created_at: datetime
+    targets: List[CourseTargetRead] = []

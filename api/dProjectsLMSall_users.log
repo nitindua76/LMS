@@ -1,0 +1,3 @@
+ID: 1, Name: LMS Admin, Role: UserRole.admin, Type: <enum 'UserRole'>
+ID: 2, Name: Demo Employee, Role: UserRole.employee, Type: <enum 'UserRole'>
+ID: 3, Name: Nitin, Role: UserRole.employee, Type: <enum 'UserRole'>

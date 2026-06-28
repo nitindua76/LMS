@@ -16,6 +16,7 @@ from app.routers.employee.scorm import router as scorm_router, launch_router as 
 from app.routers.employee.quiz import router as quiz_engine_router
 from app.routers.employee.cmi5 import router as cmi5_router
 from app.routers.admin.packages import router as packages_router
+from app.routers.admin.analytics import router as analytics_router
 
 app = FastAPI(
     title="LMS API",
@@ -107,6 +108,7 @@ app.include_router(scorm_launch_router)
 app.include_router(quiz_engine_router)
 app.include_router(cmi5_router)
 app.include_router(packages_router)
+app.include_router(analytics_router)
 
 
 @app.exception_handler(Exception)

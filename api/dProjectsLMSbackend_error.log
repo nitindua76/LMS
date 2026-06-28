@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  File "/app/app/routers/admin/analytics.py", line 340, in get_employees_analytics
+    attempts_query = db.query(QuizAttempt).options(joinedload(QuizAttempt.quiz).joinedload(Quiz.section)).filter(
+                                                                                           ^^^^
+NameError: name 'Quiz' is not defined. Did you mean: 'quit'?

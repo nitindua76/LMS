@@ -48,21 +48,118 @@ export default function CourseDetail() {
     onError: (e) => setErr(getErrorMessage(e)),
   });
 
-  // ── Target form ───────────────────────────────────────────────────────────
-  const [newTarget, setNewTarget] = useState({ discipline_id: "", level_id: "" });
-  const addTargetMut = useMutation({
-    mutationFn: () => coursesApi.addTarget(courseId, {
-      discipline_id: Number(newTarget.discipline_id),
-      level_id: Number(newTarget.level_id),
-    }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["course", courseId] }); setNewTarget({ discipline_id: "", level_id: "" }); },
-    onError: (e) => setErr(getErrorMessage(e)),
-  });
+  // ── Target form & Bulk Assignments ─────────────────────────────────────────
+  const [selectedDisciplines, setSelectedDisciplines] = useState<Record<number, boolean>>({});
+  const [selectedLevels, setSelectedLevels] = useState<Record<number, boolean>>({});
+  const [bulkPending, setBulkPending] = useState(false);
+
+  const toggleDiscipline = (id: number) => setSelectedDisciplines(p => ({ ...p, [id]: !p[id] }));
+  const toggleLevel = (id: number) => setSelectedLevels(p => ({ ...p, [id]: !p[id] }));
+
+  const selectAllDisciplines = () => {
+    const next: Record<number, boolean> = {};
+    disciplines?.items.forEach(d => { next[d.id] = true; });
+    setSelectedDisciplines(next);
+  };
+  const clearDisciplines = () => setSelectedDisciplines({});
+
+  const selectAllLevels = () => {
+    const next: Record<number, boolean> = {};
+    levels?.items.forEach(l => { next[l.id] = true; });
+    setSelectedLevels(next);
+  };
+  const clearLevels = () => setSelectedLevels({});
+
   const removeTargetMut = useMutation({
     mutationFn: (tid: number) => coursesApi.removeTarget(courseId, tid),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["course", courseId] }),
     onError: (e) => setErr(getErrorMessage(e)),
   });
+
+  const handleBulkAdd = async () => {
+    const checkedDiscs = Object.entries(selectedDisciplines).filter(([_, val]) => val).map(([id]) => Number(id));
+    const checkedLvls = Object.entries(selectedLevels).filter(([_, val]) => val).map(([id]) => Number(id));
+    if (checkedDiscs.length === 0 || checkedLvls.length === 0) return;
+
+    setBulkPending(true);
+    setErr("");
+    const existingCombos = new Set(course.targets.map(t => `${t.discipline_id}-${t.level_id}`));
+    const promises: Promise<any>[] = [];
+
+    checkedDiscs.forEach(dId => {
+      checkedLvls.forEach(lId => {
+        if (!existingCombos.has(`${dId}-${lId}`)) {
+          promises.push(coursesApi.addTarget(courseId, { discipline_id: dId, level_id: lId }));
+        }
+      });
+    });
+
+    try {
+      await Promise.all(promises);
+      qc.invalidateQueries({ queryKey: ["course", courseId] });
+      setSelectedDisciplines({});
+      setSelectedLevels({});
+    } catch (e: any) {
+      setErr(getErrorMessage(e));
+    } finally {
+      setBulkPending(false);
+    }
+  };
+
+  const handleTargetEveryone = async () => {
+    if (!disciplines || !levels) return;
+    setBulkPending(true);
+    setErr("");
+    const existingCombos = new Set(course.targets.map(t => `${t.discipline_id}-${t.level_id}`));
+    const promises: Promise<any>[] = [];
+
+    disciplines.items.forEach(d => {
+      levels.items.forEach(l => {
+        if (!existingCombos.has(`${d.id}-${l.id}`)) {
+          promises.push(coursesApi.addTarget(courseId, { discipline_id: d.id, level_id: l.id }));
+        }
+      });
+    });
+
+    try {
+      await Promise.all(promises);
+      qc.invalidateQueries({ queryKey: ["course", courseId] });
+    } catch (e: any) {
+      setErr(getErrorMessage(e));
+    } finally {
+      setBulkPending(false);
+    }
+  };
+
+  const handleClearAllTargets = async () => {
+    if (!confirm("Are you sure you want to clear all assignment targets?")) return;
+    setBulkPending(true);
+    setErr("");
+    try {
+      const promises = course.targets.map(t => coursesApi.removeTarget(courseId, t.id));
+      await Promise.all(promises);
+      qc.invalidateQueries({ queryKey: ["course", courseId] });
+    } catch (e: any) {
+      setErr(getErrorMessage(e));
+    } finally {
+      setBulkPending(false);
+    }
+  };
+
+  const handleRemoveDisciplineGroup = async (targetList: typeof course.targets) => {
+    if (!confirm("Are you sure you want to remove all targets for this department?")) return;
+    setBulkPending(true);
+    setErr("");
+    try {
+      const promises = targetList.map(t => coursesApi.removeTarget(courseId, t.id));
+      await Promise.all(promises);
+      qc.invalidateQueries({ queryKey: ["course", courseId] });
+    } catch (e: any) {
+      setErr(getErrorMessage(e));
+    } finally {
+      setBulkPending(false);
+    }
+  };
 
   if (isLoading) return <div className="center"><div className="spinner" /></div>;
   if (!course) return <div>Course not found</div>;
@@ -96,37 +193,229 @@ export default function CourseDetail() {
       {/* Targets */}
       <div className="card" style={{ marginBottom: 24 }}>
         <h3 style={{ marginBottom: 12, fontSize: 14, fontWeight: 600 }}>Assignment Targets</h3>
-        <p style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 12 }}>
+        <p style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 16 }}>
           Employees matching any of these discipline + level combos will see this course.
         </p>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
-          {course.targets.map((t) => (
-            <div key={t.id} style={{
-              display: "flex", alignItems: "center", gap: 6,
-              background: "var(--bg-elevated)", border: "1px solid var(--border)",
-              borderRadius: 4, padding: "4px 10px", fontSize: 12,
-            }}>
-              <span>{disciplines?.items.find(d => d.id === t.discipline_id)?.name ?? t.discipline_id}</span>
-              <span style={{ color: "var(--text-muted)" }}>+</span>
-              <span className="badge badge-blue">{levels?.items.find(l => l.id === t.level_id)?.code ?? t.level_id}</span>
-              <button onClick={() => removeTargetMut.mutate(t.id)} style={{ background: "none", color: "var(--danger)", padding: 0, fontSize: 14, lineHeight: 1 }}>✕</button>
-            </div>
-          ))}
-          {course.targets.length === 0 && <span style={{ color: "var(--text-muted)", fontSize: 12 }}>No targets — course is not visible to any employee.</span>}
+
+        {/* Grouped Targets Display */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 24 }}>
+          {(() => {
+            if (course.targets.length === 0) {
+              return <span style={{ color: "var(--text-muted)", fontSize: 12 }}>No targets — course is not visible to any employee.</span>;
+            }
+            const byDiscipline: Record<string, typeof course.targets> = {};
+            course.targets.forEach(t => {
+              const name = disciplines?.items.find(d => d.id === t.discipline_id)?.name ?? `Dept ${t.discipline_id}`;
+              if (!byDiscipline[name]) byDiscipline[name] = [];
+              byDiscipline[name].push(t);
+            });
+
+            return Object.entries(byDiscipline).map(([discName, targets]) => (
+              <div key={discName} style={{
+                display: "flex",
+                flexWrap: "wrap",
+                alignItems: "center",
+                gap: 8,
+                padding: "8px 12px",
+                background: "var(--bg-elevated)",
+                border: "1px solid var(--border)",
+                borderRadius: 6
+              }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                  <span style={{ fontWeight: 700, fontSize: 12, color: "var(--text)" }}>{discName}:</span>
+                  <button
+                    onClick={() => handleRemoveDisciplineGroup(targets)}
+                    style={{
+                      background: "rgba(239, 68, 68, 0.1)",
+                      border: "1px solid rgba(239, 68, 68, 0.2)",
+                      color: "var(--danger)",
+                      cursor: "pointer",
+                      fontSize: 10,
+                      fontWeight: 600,
+                      padding: "2px 6px",
+                      borderRadius: 4,
+                      textTransform: "none",
+                      letterSpacing: "normal"
+                    }}
+                    title={`Remove all targets for ${discName}`}
+                    disabled={bulkPending || removeTargetMut.isPending}
+                  >
+                    Remove Department
+                  </button>
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {targets.map(t => {
+                    const code = levels?.items.find(l => l.id === t.level_id)?.code ?? `L${t.level_id}`;
+                    return (
+                      <span key={t.id} className="badge badge-gray" style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 6,
+                        fontSize: 11
+                      }}>
+                        {code}
+                        <button
+                          onClick={() => removeTargetMut.mutate(t.id)}
+                          style={{
+                            background: "none",
+                            border: "none",
+                            color: "var(--danger)",
+                            padding: 0,
+                            cursor: "pointer",
+                            fontSize: 10,
+                            lineHeight: 1
+                          }}
+                          title="Remove target combo"
+                          disabled={removeTargetMut.isPending}
+                        >
+                          ✕
+                        </button>
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+            ));
+          })()}
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          <select value={newTarget.discipline_id} onChange={(e) => setNewTarget(t => ({ ...t, discipline_id: e.target.value }))} style={{ width: 200 }}>
-            <option value="">Discipline…</option>
-            {disciplines?.items.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-          </select>
-          <select value={newTarget.level_id} onChange={(e) => setNewTarget(t => ({ ...t, level_id: e.target.value }))} style={{ width: 120 }}>
-            <option value="">Level…</option>
-            {levels?.items.sort((a, b) => a.rank - b.rank).map(l => <option key={l.id} value={l.id}>{l.code}</option>)}
-          </select>
-          <button className="btn-primary" onClick={() => addTargetMut.mutate()}
-            disabled={!newTarget.discipline_id || !newTarget.level_id || addTargetMut.isPending}>
-            Add Target
+
+        {/* Bulk Target Builder Toolbar */}
+        <h4 style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 700 }}>Bulk Assignment Assigner</h4>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16, marginBottom: 16 }}>
+          
+          {/* Disciplines Column */}
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)" }}>Departments</span>
+              <div style={{ display: "flex", gap: 8, marginLeft: "auto" }}>
+                <button className="btn-ghost" style={{ padding: "2px 6px", fontSize: 10 }} onClick={selectAllDisciplines}>Select All</button>
+                <button className="btn-ghost" style={{ padding: "2px 6px", fontSize: 10 }} onClick={clearDisciplines}>Clear</button>
+              </div>
+            </div>
+            <div style={{
+              maxHeight: 150,
+              overflowY: "auto",
+              border: "1px solid var(--border)",
+              padding: "6px",
+              borderRadius: 6,
+              background: "var(--bg-surface)"
+            }}>
+              {disciplines?.items.map(d => (
+                <label key={d.id} style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  fontSize: "12px",
+                  padding: "4px 6px",
+                  cursor: "pointer",
+                  textTransform: "none",
+                  letterSpacing: "normal",
+                  fontWeight: "normal",
+                  marginBottom: 0
+                }} className="hover-row">
+                  <input
+                    type="checkbox"
+                    style={{
+                      width: "14px",
+                      height: "14px",
+                      margin: 0,
+                      cursor: "pointer",
+                      flexShrink: 0
+                    }}
+                    checked={!!selectedDisciplines[d.id]}
+                    onChange={() => toggleDiscipline(d.id)}
+                  />
+                  <span style={{ color: "var(--text)" }}>{d.name}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {/* Levels Column */}
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)" }}>Levels</span>
+              <div style={{ display: "flex", gap: 8, marginLeft: "auto" }}>
+                <button className="btn-ghost" style={{ padding: "2px 6px", fontSize: 10 }} onClick={selectAllLevels}>Select All</button>
+                <button className="btn-ghost" style={{ padding: "2px 6px", fontSize: 10 }} onClick={clearLevels}>Clear</button>
+              </div>
+            </div>
+            <div style={{
+              maxHeight: 150,
+              overflowY: "auto",
+              border: "1px solid var(--border)",
+              padding: "6px",
+              borderRadius: 6,
+              background: "var(--bg-surface)"
+            }}>
+              {levels?.items.sort((a, b) => a.rank - b.rank).map(l => (
+                <label key={l.id} style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  fontSize: "12px",
+                  padding: "4px 6px",
+                  cursor: "pointer",
+                  textTransform: "none",
+                  letterSpacing: "normal",
+                  fontWeight: "normal",
+                  marginBottom: 0
+                }} className="hover-row">
+                  <input
+                    type="checkbox"
+                    style={{
+                      width: "14px",
+                      height: "14px",
+                      margin: 0,
+                      cursor: "pointer",
+                      flexShrink: 0
+                    }}
+                    checked={!!selectedLevels[l.id]}
+                    onChange={() => toggleLevel(l.id)}
+                  />
+                  <span style={{ color: "var(--text)" }}>{l.code} ({l.name})</span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+        </div>
+
+        {/* Command Buttons */}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+          {(() => {
+            const checkedDiscs = Object.values(selectedDisciplines).filter(Boolean).length;
+            const checkedLvls = Object.values(selectedLevels).filter(Boolean).length;
+            const comboCount = checkedDiscs * checkedLvls;
+            return (
+              <button
+                className="btn-primary"
+                onClick={handleBulkAdd}
+                disabled={comboCount === 0 || bulkPending}
+              >
+                {bulkPending ? "Processing..." : `Add Checked Targets (${comboCount})`}
+              </button>
+            );
+          })()}
+
+          <button
+            className="btn-secondary"
+            onClick={handleTargetEveryone}
+            disabled={bulkPending || !disciplines || !levels}
+            title="Assign course to all departments and all levels"
+          >
+            Target Everyone
           </button>
+
+          {course.targets.length > 0 && (
+            <button
+              className="btn-danger"
+              onClick={handleClearAllTargets}
+              disabled={bulkPending}
+            >
+              Clear All Targets
+            </button>
+          )}
         </div>
       </div>
 

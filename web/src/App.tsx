@@ -3,6 +3,7 @@ import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import Login from "./pages/Login";
 import AdminLayout from "./components/AdminLayout";
 import EmployeeLayout from "./components/EmployeeLayout";
+import Dashboard from "./pages/admin/Dashboard";
 import Disciplines from "./pages/admin/Disciplines";
 import Levels from "./pages/admin/Levels";
 import Employees from "./pages/admin/Employees";
@@ -19,7 +20,7 @@ function RootRedirect() {
   const { user, loading } = useAuth();
   if (loading) return <div className="center"><div className="spinner" /></div>;
   if (!user) return <Navigate to="/login" replace />;
-  return <Navigate to={user.role === "admin" ? "/admin/courses" : "/my/courses"} replace />;
+  return <Navigate to={user.role === "admin" ? "/admin/dashboard" : "/my/courses"} replace />;
 }
 
 function RequireRole({ role, children }: { role: "admin" | "employee"; children: React.ReactNode }) {
@@ -44,7 +45,8 @@ export default function App() {
         <Route path="/admin" element={
           <RequireRole role="admin"><AdminLayout /></RequireRole>
         }>
-          <Route index element={<Navigate to="courses" replace />} />
+          <Route index element={<Navigate to="dashboard" replace />} />
+          <Route path="dashboard" element={<Dashboard />} />
           <Route path="disciplines" element={<Disciplines />} />
           <Route path="levels" element={<Levels />} />
           <Route path="employees" element={<Employees />} />

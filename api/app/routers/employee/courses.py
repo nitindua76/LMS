@@ -127,25 +127,39 @@ def course_detail(
             # else: ci.url is not an http URL and no storage_key — misconfigured item, omit url
             content_items.append(item_data)
 
-        has_started = False
-        if sp:
-            has_started = True
-        else:
-            # Check if SCORM has any activity in database
-            from app.models.package import LearningPackage, ScormCmiData
-            for ci in s.content_items:
-                if ci.type == ContentType.scorm:
-                    pkg = db.query(LearningPackage).filter(
-                        LearningPackage.content_item_id == ci.id
-                    ).first()
-                    if pkg:
-                        exists = db.query(ScormCmiData).filter(
-                            ScormCmiData.user_id == current_user.id,
-                            ScormCmiData.learning_package_id == pkg.id,
-                        ).first()
-                        if exists:
-                            has_started = True
-                            break
+        has_started = sp is not None
+        scorm_pct: float | None = None
+
+        # Fetch SCORM details if section has SCORM content
+        from app.models.package import LearningPackage, ScormCmiData
+        scorm_item = next((ci for ci in s.content_items if ci.type == ContentType.scorm), None)
+        if scorm_item:
+            pkg = db.query(LearningPackage).filter(
+                LearningPackage.content_item_id == scorm_item.id
+            ).first()
+            if pkg:
+                cmi_rows = db.query(ScormCmiData).filter(
+                    ScormCmiData.user_id == current_user.id,
+                    ScormCmiData.learning_package_id == pkg.id,
+                ).all()
+                if cmi_rows:
+                    has_started = True
+                    # Only compute partial progress if not fully complete
+                    if not (sp and sp.completed_at):
+                        vals = []
+                        for r in cmi_rows:
+                            if r.progress_measure is not None:
+                                vals.append(r.progress_measure)
+                            elif r.score_scaled is not None:
+                                vals.append(r.score_scaled)
+                            elif r.completion_status == "completed":
+                                vals.append(1.0)
+                        if vals:
+                            scorm_pct = round(sum(vals) / len(vals) * 100, 1)
+
+        # If section is fully complete, show 100%
+        if sp and sp.completed_at:
+            scorm_pct = 100.0
 
         sections_data.append({
             "id": s.id,
@@ -157,6 +171,7 @@ def course_detail(
             "completed_at": sp.completed_at.isoformat() if sp and sp.completed_at else None,
             "has_quiz": s.quiz is not None,
             "has_started": has_started,
+            "scorm_pct": scorm_pct,
             "content_items": content_items,
         })
 

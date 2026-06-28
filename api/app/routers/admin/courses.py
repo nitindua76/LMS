@@ -41,7 +41,7 @@ def list_courses(
     db: Session = Depends(get_db),
     _: User = Depends(require_admin),
 ):
-    q = db.query(Course)
+    q = db.query(Course).options(joinedload(Course.targets))
     if status is not None:
         q = q.filter(Course.status == status)
     if mandatory is not None:

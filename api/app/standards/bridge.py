@@ -175,8 +175,21 @@ def scorm_completion_to_progress(
     # Ensure current one is counted as completed
     completed_set.add(cmi_data.sco_identifier)
 
-    # Check if all SCOs from manifest are completed
-    if not set(sco_identifiers).issubset(completed_set):
+    # Normalize paths to be immune to Windows backslash/forward slash, casing, and query parameter discrepancies
+    def normalize_path(p: str) -> str:
+        if not p:
+            return ""
+        p = p.replace("\\", "/").strip("/")
+        if "?" in p:
+            p = p.split("?")[0]
+        return p.lower()
+
+    norm_manifest = {normalize_path(s) for s in sco_identifiers if s}
+    norm_completed = {normalize_path(s) for s in completed_set if s}
+
+    is_single_sco = len(norm_manifest) <= 1
+
+    if not is_single_sco and not norm_manifest.issubset(norm_completed):
         return False
 
     sp = _get_or_create_sp(db, enrollment, section, ProgressSource.scorm)

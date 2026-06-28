@@ -4,6 +4,7 @@ import { useAuth } from "../contexts/AuthContext";
 import { useTheme } from "../contexts/ThemeContext";
 
 const NAV = [
+  { to: "/admin/dashboard", label: "Dashboard" },
   { to: "/admin/courses", label: "Courses" },
   { to: "/admin/employees", label: "Employees" },
   { to: "/admin/disciplines", label: "Disciplines" },

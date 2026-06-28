@@ -51,6 +51,13 @@
         headers: { 'Content-Type': 'application/json', 'X-SCORM-Token': token },
         body: JSON.stringify({ cmi_data: data }),
         keepalive: true,
+      }).then(function (r) {
+        window.parent.postMessage({
+          type:           'scorm_committed',
+          package_id:     parseInt(pkgId, 10),
+          sco_identifier: scoPath
+        }, '*');
+        return r;
       });
     } catch (_) {
       return Promise.resolve(null);
@@ -194,6 +201,56 @@
   window.RecordQuestion = function (id, text, type, response, correctAnswer, wasCorrect, objectiveId) {
     // stub to prevent errors from content-level question logging calls
   };
+
+  // Poll sub-iframe DOM for progress percentages (e.g. from Rise 360 templates)
+  setInterval(function () {
+    try {
+      var iframe = document.getElementById('sco');
+      if (!iframe) return;
+      var doc = iframe.contentDocument || iframe.contentWindow.document;
+      if (!doc) return;
+
+      var elements = doc.querySelectorAll('*');
+      var foundProgress = null;
+
+      for (var i = 0; i < elements.length; i++) {
+        var el = elements[i];
+        if (el.children && el.children.length > 0) continue;
+
+        var txt = (el.textContent || '').trim();
+        var match = txt.match(/^(\d+(?:\.\d+)?)\s*%$/);
+        if (match) {
+          var val = parseFloat(match[1]);
+          if (!isNaN(val) && val >= 0 && val <= 100) {
+            var parent = el.parentElement;
+            var looksLikeProgress = false;
+            while (parent) {
+              var className = (parent.className || '').toString().toLowerCase();
+              if (className.indexOf('progress') !== -1 || className.indexOf('header') !== -1 || className.indexOf('sidebar') !== -1 || className.indexOf('nav') !== -1) {
+                looksLikeProgress = true;
+                break;
+              }
+              parent = parent.parentElement;
+            }
+            if (looksLikeProgress) {
+              foundProgress = val / 100;
+              break;
+            }
+          }
+        }
+      }
+
+      if (foundProgress !== null && window.API_1484_11 && initialized) {
+        var currentVal = window.API_1484_11.GetValue("cmi.progress_measure");
+        if (currentVal === '' || parseFloat(currentVal) !== foundProgress) {
+          window.API_1484_11.SetValue("cmi.progress_measure", String(foundProgress));
+          window.API_1484_11.Commit("");
+        }
+      }
+    } catch (e) {
+      // Ignore cross-origin security blocks or temporary loading states
+    }
+  }, 3500);
 
   /* ── Load the SCO in the sub-iframe (same origin as this loader, so SCO can
         discover window.parent.API_1484_11 via the standard frame-walk) ── */

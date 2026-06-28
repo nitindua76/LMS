@@ -89,6 +89,7 @@ class ScormCmiData(Base):
     location: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
     entry: Mapped[str] = mapped_column(String(20), nullable=False, default="ab-initio")
     exit: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    progress_measure: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     interactions: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True, default=list)
     objectives: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True, default=list)
     updated_at: Mapped[datetime] = mapped_column(

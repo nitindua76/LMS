@@ -193,3 +193,83 @@ export const packagesApi = {
     return client.post(`/admin/content-items/${itemId}/package`, fd).then((r) => r.data);
   },
 };
+
+// ── Analytics ──────────────────────────────────────────────────────────────────
+export interface AnalyticsOverview {
+  enrolled_courses_count: number;
+  total_targeted_instances: number;
+  active_courses_count: number;
+  closed_courses_count: number;
+  total_time_spent_hours: number;
+}
+
+export interface CourseStudentProgress {
+  user_id: number;
+  name: string;
+  email: string;
+  progress: number;
+  quiz_score: number | null;
+  started_at: string | null;
+}
+
+export interface CourseScormStat {
+  sco_identifier: string;
+  title: string;
+  avg_time_sec: number;
+  completed_count: number;
+  in_progress_count: number;
+  not_attempted_count: number;
+  is_quiz: boolean;
+  passed_count: number;
+  failed_count: number;
+  avg_score: number;
+}
+
+export interface CourseAnalyticsSummary {
+  id: number;
+  title: string;
+  status: string;
+  target_audience_count: number;
+  completed_count: number;
+  started_count: number;
+  not_enrolled_count: number;
+  students_completed: CourseStudentProgress[];
+  students_started: CourseStudentProgress[];
+  students_not_enrolled: CourseStudentProgress[];
+  scorm_stats: CourseScormStat[];
+}
+
+export interface EmployeeTargetedCourse {
+  course_id: number;
+  title: string;
+  status: "Completed" | "Enrolled" | "Not Enrolled";
+  is_active: boolean;
+  progress: number;
+  quiz_score: number | null;
+}
+
+export interface EmployeeActivityEvent {
+  date: string;
+  event: string;
+  type: "completion" | "quiz";
+}
+
+export interface EmployeeAnalyticsSummary {
+  id: number;
+  name: string;
+  email: string;
+  discipline: string;
+  level: string;
+  completed_targeted_count: number;
+  enrolled_targeted_count: number;
+  not_enrolled_targeted_count: number;
+  targeted_courses: EmployeeTargetedCourse[];
+  timeline: EmployeeActivityEvent[];
+}
+
+export const analyticsApi = {
+  overview: () => client.get<AnalyticsOverview>("/admin/analytics/overview").then((r) => r.data),
+  courses: () => client.get<CourseAnalyticsSummary[]>("/admin/analytics/courses").then((r) => r.data),
+  employees: () => client.get<EmployeeAnalyticsSummary[]>("/admin/analytics/employees").then((r) => r.data),
+};
+

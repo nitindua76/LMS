@@ -5,7 +5,7 @@ from typing import List
 
 class Settings(BaseSettings):
     # Database
-    DATABASE_URL: str = "postgresql+psycopg://lms:lmspassword@localhost:5432/lms"
+    DATABASE_URL: str = "postgresql+psycopg://lms:lmspassword@localhost:5437/lms"
 
     # Redis
     REDIS_URL: str = "redis://localhost:6379/0"

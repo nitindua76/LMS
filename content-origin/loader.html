@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>SCORM Content Loader</title>
+  <style>
+    html, body, #sco { margin: 0; padding: 0; width: 100%; height: 100vh; border: none; background: #fff; }
+  </style>
+</head>
+<body>
+<iframe id="sco" style="width:100%;height:100vh;border:none"></iframe>
+<script>
+(function () {
+  'use strict';
+
+  const params = new URLSearchParams(location.search);
+  const API_BASE = params.get('api') || 'http://lms.local:8000';
+  const token    = params.get('token') || '';
+  const pkgId    = params.get('pkg')   || '';  // LearningPackage.id — used in SCORM token
+  const ciId     = params.get('ci')    || pkgId; // ContentItem.id — used for asset path
+  const scoPath  = params.get('sco')   || '';
+
+  /* ── in-memory CMI state ── */
+  let cmiData    = {};
+  let errorCode  = '0';
+  let initialized = false;
+  let sessionId  = null;
+
+  /* ── sync XHR (used only for Initialize / Terminate where SCO expects sync return) ── */
+  function syncRequest(method, url, body) {
+    try {
+      const xhr = new XMLHttpRequest();
+      xhr.open(method, url, false);           // false = synchronous
+      xhr.setRequestHeader('Content-Type', 'application/json');
+      xhr.setRequestHeader('X-SCORM-Token', token);
+      xhr.send(body ? JSON.stringify(body) : null);
+      if (xhr.status >= 200 && xhr.status < 300) {
+        return JSON.parse(xhr.responseText || 'null');
+      }
+    } catch (e) { /* network error */ }
+    return null;
+  }
+
+  /* ── async commit (fire-and-forget with keepalive so it survives page close) ── */
+  function asyncCommit(data) {
+    if (!sessionId) return Promise.resolve(null);
+    try {
+      return fetch(API_BASE + '/api/scorm/sessions/' + sessionId + '/commit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-SCORM-Token': token },
+        body: JSON.stringify({ cmi_data: data }),
+        keepalive: true,
+      });
+    } catch (_) {
+      return Promise.resolve(null);
+    }
+  }
+
+  /* ── flatten nested cmi.* keys the SCO may set ── */
+  function flatKey(k) { return k; }
+
+  /* ══════════════════════════════════════════════════════════════════
+     SCORM 2004 API_1484_11
+     ═══════════════════════════════════════════════════════════════════ */
+  window.API_1484_11 = {
+
+    Initialize: function (s) {
+      if (s !== '') { errorCode = '201'; return 'false'; }
+      if (initialized) { errorCode = '103'; return 'false'; }
+
+      const res = syncRequest('POST', API_BASE + '/api/scorm/sessions', {
+        package_id: parseInt(pkgId, 10),
+        sco_identifier: scoPath
+      });
+      if (!res) { errorCode = '101'; return 'false'; }
+
+      sessionId   = res.session_id;
+      cmiData     = res.cmi_data || {};
+      errorCode   = '0';
+      initialized = true;
+      return 'true';
+    },
+
+    Terminate: function (s) {
+      if (s !== '') { errorCode = '201'; return 'false'; }
+      if (!initialized) { errorCode = '112'; return 'false'; }
+
+      try {
+        fetch(API_BASE + '/api/scorm/sessions/' + sessionId + '/terminate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-SCORM-Token': token },
+          body: JSON.stringify({ cmi_data: cmiData }),
+          keepalive: true,
+        });
+      } catch (_) {}
+
+      initialized = false;
+      errorCode   = '0';
+
+      /* Notify the LMS parent frame */
+      window.parent.postMessage({
+        type:              'scorm_terminated',
+        package_id:        parseInt(pkgId, 10),
+        completion_status: cmiData['cmi.completion_status'] || 'unknown',
+        success_status:    cmiData['cmi.success_status']    || 'unknown',
+        score_scaled:      parseFloat(cmiData['cmi.score.scaled'] || '0') || 0,
+        section_complete:  false, // Refetched by parent in background
+      }, '*');
+
+      return 'true';
+    },
+
+    GetValue: function (element) {
+      errorCode = '0';
+      const val = cmiData[flatKey(element)];
+      if (val === undefined || val === null) { errorCode = '401'; return ''; }
+      return String(val);
+    },
+
+    SetValue: function (element, value) {
+      if (!initialized) { errorCode = '142'; return 'false'; }
+      errorCode = '0';
+      cmiData[flatKey(element)] = value;
+      return 'true';
+    },
+
+    Commit: function (s) {
+      if (s !== '') { errorCode = '201'; return 'false'; }
+      asyncCommit(cmiData);
+      errorCode = '0';
+      return 'true';
+    },
+
+    GetLastError:   function ()      { return errorCode; },
+    GetErrorString: function (code)  {
+      const msgs = {
+        '0':   'No Error',
+        '101': 'General Exception',
+        '102': 'General Initialization Failure',
+        '103': 'Already Initialized',
+        '104': 'Content Instance Terminated',
+        '111': 'General Termination Failure',
+        '112': 'Termination Before Initialization',
+        '113': 'Termination After Termination',
+        '122': 'Retrieve Data Before Initialization',
+        '123': 'Retrieve Data After Termination',
+        '132': 'Store Data Before Initialization',
+        '133': 'Store Data After Termination',
+        '142': 'Commit Before Initialization',
+        '143': 'Commit After Termination',
+        '201': 'Invalid Argument Error',
+        '301': 'General Get Failure',
+        '351': 'General Set Failure',
+        '391': 'General Commit Failure',
+        '401': 'Undefined Data Model Element',
+        '402': 'Unimplemented Data Model Element',
+        '403': 'Data Model Element Value Not Initialized',
+        '404': 'Data Model Element Is Read Only',
+        '405': 'Data Model Element Is Write Only',
+        '406': 'Data Model Element Type Mismatch',
+        '407': 'Data Model Element Value Out Of Range',
+        '408': 'Data Model Dependency Not Established',
+      };
+      return msgs[String(code)] || 'Unknown Error';
+    },
+    GetDiagnostic:  function (code)  { return 'Diagnostic for error ' + code; },
+  };
+
+  window.RecordTest = function (score) {
+    const scaledScore = score / 100;
+    window.API_1484_11.SetValue("cmi.score.scaled", String(scaledScore));
+    window.API_1484_11.SetValue("cmi.score.raw", String(score));
+    window.API_1484_11.SetValue("cmi.completion_status", "completed");
+
+    const masteryParam = params.get('mastery');
+    const masteryScore = (masteryParam !== null) ? parseFloat(masteryParam) : 0.8;
+    const passed = (scaledScore >= masteryScore);
+    window.API_1484_11.SetValue("cmi.success_status", passed ? "passed" : "failed");
+
+    /* Commit to backend first and wait for the response */
+    asyncCommit(cmiData).then(() => {
+      /* Notify parent frame once successfully saved */
+      window.parent.postMessage({
+        type:           'scorm_commit_quiz',
+        package_id:     parseInt(pkgId, 10),
+        sco_identifier: scoPath,
+        score:          score,
+        passed:         passed
+      }, '*');
+    });
+  };
+
+  window.RecordQuestion = function (id, text, type, response, correctAnswer, wasCorrect, objectiveId) {
+    // stub to prevent errors from content-level question logging calls
+  };
+
+  /* ── Load the SCO in the sub-iframe (same origin as this loader, so SCO can
+        discover window.parent.API_1484_11 via the standard frame-walk) ── */
+  if (scoPath) {
+    document.getElementById('sco').src = '/pkg/' + ciId + '/' + scoPath;
+  }
+})();
+</script>
+</body>
+</html>

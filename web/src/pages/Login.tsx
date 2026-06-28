@@ -38,17 +38,30 @@ export default function Login() {
       alignItems: "center",
       justifyContent: "center",
       background: "var(--bg)",
+      padding: 16,
     }}>
-      <div style={{ width: 360 }}>
-        <div style={{ textAlign: "center", marginBottom: 32 }}>
-          <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 6 }}>LMS</h1>
-          <p style={{ color: "var(--text-muted)", fontSize: 14 }}>Learning Management System</p>
+      <div style={{ width: "100%", maxWidth: 380 }}>
+        <div style={{ textAlign: "center", marginBottom: 28 }}>
+          <h1 style={{
+            fontSize: 32,
+            fontWeight: 800,
+            marginBottom: 6,
+            letterSpacing: "-0.03em",
+            background: "linear-gradient(135deg, var(--accent) 0%, #818cf8 100%)",
+            WebkitBackgroundClip: "text",
+            WebkitTextFillColor: "transparent",
+          }}>
+            LMS
+          </h1>
+          <p style={{ color: "var(--text-muted)", fontSize: 13.5, fontWeight: 500 }}>
+            Learning Management System
+          </p>
         </div>
-        <div className="card">
-          <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 24 }}>Sign in</h2>
+        <div className="card" style={{ padding: "28px 24px" }}>
+          <h2 style={{ fontSize: 18, fontWeight: 750, marginBottom: 20, letterSpacing: "-0.02em" }}>Sign in</h2>
           <form onSubmit={handleSubmit}>
             <div className="form-group">
-              <label htmlFor="email">Email</label>
+              <label htmlFor="email">Email address</label>
               <input
                 id="email"
                 type="email"
@@ -59,7 +72,7 @@ export default function Login() {
                 autoFocus
               />
             </div>
-            <div className="form-group">
+            <div className="form-group" style={{ marginBottom: 20 }}>
               <label htmlFor="password">Password</label>
               <input
                 id="password"
@@ -74,7 +87,7 @@ export default function Login() {
             <button
               type="submit"
               className="btn-primary"
-              style={{ width: "100%", padding: "10px 0" }}
+              style={{ width: "100%", padding: "10px 0", fontWeight: 600, fontSize: 13.5 }}
               disabled={loading}
             >
               {loading ? "Signing in…" : "Sign in"}

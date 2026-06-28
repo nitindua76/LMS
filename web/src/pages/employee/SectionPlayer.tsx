@@ -48,6 +48,7 @@ export default function SectionPlayer() {
   const [scormComplete, setScormComplete] = useState(false);
   const [quizResult, setQuizResult] = useState<{ passed: boolean; score: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showMobileToc, setShowMobileToc] = useState(false);
   const [loading, setLoading] = useState(false);
   const [toc, setToc] = useState<any[]>([]);
   const [activeSco, setActiveSco] = useState<string | null>(null);
@@ -61,6 +62,23 @@ export default function SectionPlayer() {
   const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pdfTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
+
+  // Dynamic layout locking to remove duplicate page scrollbars and maximize player viewport
+  useEffect(() => {
+    const layoutMain = document.querySelector(".layout-main") as HTMLElement;
+    if (layoutMain) {
+      const originalOverflow = layoutMain.style.overflow;
+      const originalPadding = layoutMain.style.padding;
+      
+      layoutMain.style.overflow = "hidden";
+      layoutMain.style.padding = "16px 24px"; // Tighter padding to maximize SCORM player viewport size
+      
+      return () => {
+        layoutMain.style.overflow = originalOverflow;
+        layoutMain.style.padding = originalPadding;
+      };
+    }
+  }, []);
 
   // Sync state from API
   useEffect(() => {
@@ -314,27 +332,28 @@ export default function SectionPlayer() {
                 setActiveSco(node.href);
                 refetchProgress();
                 queryClient.invalidateQueries({ queryKey: ["my-course", cId] });
+                setShowMobileToc(false);
               }}
               style={{
                 cursor: "pointer",
                 padding: "6px 8px",
                 borderRadius: 4,
                 color: isActive ? "var(--primary)" : "var(--text)",
-                background: isActive ? "rgba(255, 255, 255, 0.08)" : "transparent",
+                background: isActive ? "var(--bg-elevated)" : "transparent",
                 fontWeight: isActive ? 600 : "normal",
-                transition: "all 0.2s",
+                transition: "all 0.15s ease",
                 display: "block",
                 marginBottom: 2,
                 opacity: isCompleted ? 0.6 : 1.0,
               }}
               onMouseEnter={(e) => {
-                if (!isActive) e.currentTarget.style.background = "rgba(255, 255, 255, 0.04)";
+                if (!isActive) e.currentTarget.style.background = "var(--bg-elevated)";
               }}
               onMouseLeave={(e) => {
                 if (!isActive) e.currentTarget.style.background = "transparent";
               }}
             >
-              {isCompleted ? "✓" : "📄"} {node.title}{scoreStr}
+              {isCompleted ? "✓ " : "📄 "} {node.title}{scoreStr}
             </div>
           )}
           {node.children && node.children.length > 0 && renderTocNodes(node.children, depth + 1)}
@@ -349,10 +368,15 @@ export default function SectionPlayer() {
 
   if (section.locked) {
     return (
-      <div>
-        <Link to={`/my/courses/${cId}`} style={{ color: "var(--text-muted)" }}>← Back to Course</Link>
-        <div className="card" style={{ marginTop: 24 }}>
-          <p style={{ color: "var(--danger)" }}>This section is locked. Complete previous sections first.</p>
+      <div style={{ maxWidth: 768, margin: "0 auto", width: "100%" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 20 }}>
+          <Link to={`/my/courses/${cId}`} style={{ color: "var(--text-muted)", fontSize: 13, textDecoration: "none" }}>
+            ← Back to {course.title}
+          </Link>
+          <h1 style={{ fontSize: 24, fontWeight: 700, marginTop: 4, letterSpacing: "-0.02em" }}>{section.title}</h1>
+        </div>
+        <div className="card" style={{ padding: "20px", borderColor: "var(--danger)" }}>
+          <p style={{ color: "var(--danger)", fontWeight: 500 }}>🔒 This section is locked. Please complete previous sections first.</p>
         </div>
       </div>
     );
@@ -361,38 +385,48 @@ export default function SectionPlayer() {
   const isScorm = item?.type === "scorm";
 
   return (
-    <div style={{ maxWidth: isScorm ? 1080 : 720, margin: "0 auto" }}>
-      <div className="page-header">
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <Link to={`/my/courses/${cId}`} style={{ color: "var(--text-muted)" }}>← {course.title}</Link>
+    <div style={{ maxWidth: isScorm ? 1360 : 768, margin: "0 auto", width: "100%", display: isScorm ? "flex" : "block", flexDirection: "column", flex: isScorm ? 1 : "none", minHeight: 0 }}>
+      {/* Dynamic unified header */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 20, gap: 12, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <Link to={`/my/courses/${cId}`} style={{ color: "var(--text-muted)", fontSize: 13, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 4 }}>
+            ← Back to {course.title}
+          </Link>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <h1 style={{ fontSize: 24, fontWeight: 700, marginTop: 4, letterSpacing: "-0.02em" }}>{section.title}</h1>
+            {phase === "done" && (
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+                <span className="badge badge-green" style={{ textTransform: "none", fontSize: 11, padding: "3px 8px" }}>✓ Complete</span>
+                {quizResult && (
+                  <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                    (Quiz: {quizResult.score}% — {quizResult.passed ? "Passed" : "Failed"})
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {phase === "done" && (
+            <Link to={`/my/courses/${cId}`} style={{ display: "inline-flex" }}>
+              <button className="btn-primary" style={{ padding: "6px 12px", fontSize: 12 }}>Back to Course</button>
+            </Link>
+          )}
+          {isScorm && toc.length > 0 && (
+            <button 
+              className="btn-secondary mobile-toc-toggle"
+              onClick={() => setShowMobileToc(prev => !prev)}
+              style={{ fontSize: 12, padding: "6px 12px", height: "fit-content" }}
+            >
+              {showMobileToc ? "✕ Close Index" : "☰ Course Index"}
+            </button>
+          )}
         </div>
       </div>
 
-      <h1 style={{ marginBottom: 20 }}>{section.title}</h1>
-
-      {/* DONE banner */}
-      {phase === "done" && (
-        <div className="card" style={{ marginBottom: 24, borderColor: "var(--success)", background: "var(--bg-elevated)" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <span style={{ fontSize: 22 }}>✓</span>
-            <div>
-              <div style={{ fontWeight: 600, color: "var(--success)" }}>Section Complete</div>
-              {quizResult && (
-                <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2 }}>
-                  Quiz score: {quizResult.score}% — {quizResult.passed ? "Passed" : "Failed"}
-                </div>
-              )}
-            </div>
-          </div>
-          <Link to={`/my/courses/${cId}`}>
-            <button className="btn-primary" style={{ marginTop: 16 }}>Back to Course</button>
-          </Link>
-        </div>
-      )}
-
-      {/* CONTENT PHASE */}
+      {/* Content player area */}
       {(phase === "content" || phase === "done") && item && (
-        <div className="card" style={{ marginBottom: 24 }}>
+        <div className={isScorm ? "" : "card"} style={{ marginBottom: isScorm ? 0 : 24, display: isScorm ? "flex" : "block", flexDirection: "column", flex: isScorm ? 1 : "none", minHeight: 0 }}>
           {item.type === "video" && item.url && (
             <div>
               <video
@@ -431,30 +465,30 @@ export default function SectionPlayer() {
           )}
 
           {item.type === "scorm" && (
-            <div>
+            <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
               {phase !== "done" && (
-                <p style={{ marginBottom: 16, color: "var(--text-muted)", fontSize: 14 }}>
+                <p style={{ marginBottom: 12, color: "var(--text-muted)", fontSize: 13.5 }}>
                   The SCORM module will open in a sandboxed frame below.
                   Complete all activities in the module to progress.
                 </p>
               )}
-              <div style={{ display: "flex", gap: 20, minHeight: 600, flexDirection: window.innerWidth < 768 ? "column" : "row" }}>
+              <div className="player-layout" style={{ flex: 1, minHeight: 0 }}>
                 {/* Table of Contents Sidebar */}
                 {toc.length > 0 && (
-                  <div className="card" style={{ width: window.innerWidth < 768 ? "100%" : 260, flexShrink: 0, padding: 12, overflowY: "auto", maxHeight: 600 }}>
-                    <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 12, paddingBottom: 8, borderBottom: "1px solid var(--border)" }}>
+                  <div className={`card player-sidebar ${showMobileToc ? "open" : ""}`} style={{ padding: "16px 12px" }}>
+                    <h3 style={{ fontSize: 12, fontWeight: 700, marginBottom: 12, paddingBottom: 8, borderBottom: "1px solid var(--border)", textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--text-muted)" }}>
                       Course Contents
                     </h3>
-                    <div style={{ fontSize: 13 }}>
+                    <div style={{ flex: 1, overflowY: "auto" }}>
                       {renderTocNodes(toc)}
                     </div>
                   </div>
                 )}
 
                 {/* Content Iframe */}
-                <div style={{ flex: 1 }}>
+                <div className="player-content">
                   {isActiveScoQuiz && isQuizCompleted ? (
-                    <div className="card" style={{ padding: "40px 20px", textAlign: "center", border: "1px solid var(--border)", borderRadius: 8, background: "var(--bg-elevated)" }}>
+                    <div className="card" style={{ padding: "40px 20px", textAlign: "center", border: "1px solid var(--border)", borderRadius: 8, background: "var(--bg-elevated)", height: "100%", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center" }}>
                       <span style={{ fontSize: 48 }}>📊</span>
                       <h2 style={{ marginTop: 16, color: "var(--primary)" }}>Quiz Results</h2>
                       <div style={{ margin: "24px 0" }}>
@@ -463,7 +497,7 @@ export default function SectionPlayer() {
                           {successStatus === "passed" ? "PASSED" : "FAILED"}
                         </div>
                       </div>
-                      <p style={{ color: "var(--text-muted)", fontSize: 13, marginBottom: 20 }}>
+                      <p style={{ color: "var(--text-muted)", fontSize: 13, marginBottom: 20, maxWidth: 360 }}>
                         Your attempt has been saved. You can review your score here or retake the quiz.
                       </p>
                       <button className="btn-primary" onClick={handleRetakeQuiz} disabled={loading}>
@@ -476,7 +510,7 @@ export default function SectionPlayer() {
                       src={getIframeUrl()}
                       allow="fullscreen"
                       sandbox="allow-scripts allow-forms allow-same-origin allow-popups"
-                      style={{ width: "100%", height: 600, border: "1px solid var(--border)", borderRadius: 8, background: "#fff" }}
+                      style={{ width: "100%", height: "100%", border: "1px solid var(--border)", borderRadius: 8, background: "#fff", flex: 1, display: "block" }}
                       title="SCORM Content"
                     />
                   ) : (
@@ -506,7 +540,7 @@ export default function SectionPlayer() {
         </div>
       )}
 
-      {/* QUIZ PHASE */}
+      {/* Quiz phase */}
       {phase === "quiz" && (
         <div style={{ marginBottom: 24 }}>
           <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>Section Quiz</h2>

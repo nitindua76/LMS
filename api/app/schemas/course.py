@@ -94,3 +94,15 @@ class CourseSummary(BaseModel):
     duration_days: Optional[int] = None
     created_at: datetime
     targets: List[CourseTargetRead] = []
+
+
+class CoursePurgeRequest(BaseModel):
+    """Type-to-confirm gate for the irreversible hard-delete endpoint."""
+    confirm_title: str
+
+
+class CoursePurgeResponse(BaseModel):
+    course_id: int
+    title: str
+    enrollments_deleted: int
+    quiz_attempts_deleted: int

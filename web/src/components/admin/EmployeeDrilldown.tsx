@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { analyticsApi, EmployeeCourseProgress, EmployeeActivityEvent } from "../../api/admin";
 
@@ -67,20 +68,27 @@ export default function EmployeeDrilldown({ employeeId, onClose }: EmployeeDrill
               }
             </p>
           </div>
-          <button
-            onClick={onClose}
-            style={{
-              background: "none",
-              border: "none",
-              fontSize: 24,
-              color: "var(--text-muted)",
-              cursor: "pointer",
-              padding: 4,
-              lineHeight: 1
-            }}
-          >
-            &times;
-          </button>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Link to={`/admin/employees/${employeeId}`}>
+              <button className="btn-secondary" style={{ fontSize: 12, padding: "6px 12px" }}>
+                Full Profile →
+              </button>
+            </Link>
+            <button
+              onClick={onClose}
+              style={{
+                background: "none",
+                border: "none",
+                fontSize: 24,
+                color: "var(--text-muted)",
+                cursor: "pointer",
+                padding: 4,
+                lineHeight: 1
+              }}
+            >
+              &times;
+            </button>
+          </div>
         </div>
 
         {isLoading ? (

@@ -1,13 +1,17 @@
 import { useState, useEffect } from "react";
 import { Outlet, NavLink, useNavigate, useLocation } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "../contexts/AuthContext";
 import { useTheme } from "../contexts/ThemeContext";
+import { employeeApi } from "../api/employee";
 
 export default function EmployeeLayout() {
   const { user, logout } = useAuth();
   const { theme, setTheme } = useTheme();
   const navigate = useNavigate();
   const location = useLocation();
+  const { data: team } = useQuery({ queryKey: ["my-team"], queryFn: () => employeeApi.myTeam() });
+  const hasReports = !!team && team.length > 0;
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(() => localStorage.getItem("sidebar-collapsed") === "true");
 
@@ -79,6 +83,24 @@ export default function EmployeeLayout() {
             >
               My Courses
             </NavLink>
+            {hasReports && (
+              <NavLink
+                to="/my/team"
+                style={({ isActive }) => ({
+                  display: "block",
+                  padding: "8px 16px",
+                  margin: "2px 12px",
+                  borderRadius: "6px",
+                  color: isActive ? "var(--sidebar-item-active-text)" : "var(--sidebar-text-muted)",
+                  background: isActive ? "var(--sidebar-item-active-bg)" : "transparent",
+                  fontSize: "13.5px",
+                  fontWeight: isActive ? 600 : 500,
+                  transition: "all 0.15s ease",
+                })}
+              >
+                My Team
+              </NavLink>
+            )}
           </nav>
 
           {/* Theme Switcher + Logout in a single elegant row */}

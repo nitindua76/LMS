@@ -10,6 +10,7 @@ Invariants enforced here:
 """
 from datetime import datetime, timezone
 from typing import Optional
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.enrollment import (
@@ -279,14 +280,27 @@ def _get_or_create_sp(
         SectionProgress.enrollment_id == enrollment.id,
         SectionProgress.section_id == section.id,
     ).first()
-    if not sp:
-        sp = SectionProgress(
-            enrollment_id=enrollment.id,
-            section_id=section.id,
-            source=source,
-        )
-        db.add(sp)
+    if sp:
+        return sp
+
+    sp = SectionProgress(
+        enrollment_id=enrollment.id,
+        section_id=section.id,
+        source=source,
+    )
+    db.add(sp)
+    try:
         db.flush()
+    except IntegrityError:
+        # Lost a race with a concurrent request creating the same (enrollment,
+        # section) row — use the one that won instead of failing this request.
+        db.rollback()
+        sp = db.query(SectionProgress).filter(
+            SectionProgress.enrollment_id == enrollment.id,
+            SectionProgress.section_id == section.id,
+        ).first()
+        if sp is None:
+            raise
     return sp
 
 

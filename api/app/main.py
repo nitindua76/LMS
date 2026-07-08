@@ -1,6 +1,7 @@
-from fastapi import FastAPI, Request, Query, HTTPException
+from typing import Optional
+from fastapi import FastAPI, Request, Query, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from app.config import settings
 from app.routers.auth import router as auth_router
@@ -11,6 +12,7 @@ from app.routers.admin.courses import router as courses_router
 from app.routers.admin.sections import router as sections_router, content_router
 from app.routers.admin.quizzes import router as quiz_router, questions_router, options_router
 from app.routers.employee.courses import router as employee_courses_router
+from app.routers.employee.team import router as employee_team_router
 from app.routers.employee.content import router as employee_content_router
 from app.routers.employee.scorm import router as scorm_router, launch_router as scorm_launch_router
 from app.routers.employee.quiz import router as quiz_engine_router
@@ -102,6 +104,7 @@ app.include_router(quiz_router)
 app.include_router(questions_router)
 app.include_router(options_router)
 app.include_router(employee_courses_router)
+app.include_router(employee_team_router)
 app.include_router(employee_content_router)
 app.include_router(scorm_router)
 app.include_router(scorm_launch_router)
@@ -125,10 +128,23 @@ def health():
 
 
 @app.get("/api/content/download")
-def local_content_download(token: str = Query(...)):
+def local_content_download(token: str = Query(...), range_header: Optional[str] = Header(None, alias="Range")):
     """
     Serve locally-stored content via a short-lived signed token (LocalBackend only).
-    MinIO generates its own presigned URLs and never routes through here.
+    MinIO generates its own presigned URLs (which support Range natively) and
+    never routes through here.
+
+    Honors HTTP Range requests (206 Partial Content) — without this, browsers
+    can't reliably seek a large <video>: a plain 200 with the whole file forces
+    a full re-download on every seek attempt, and playback position restoration
+    (resume-from-last-position) silently fails since the browser can't fetch
+    just the byte range around the target timestamp.
+
+    Both the ranged and full-file paths stream the response in fixed-size
+    chunks (LocalBackend.iter_range) rather than reading the whole file into
+    memory first — a 500MB video request never costs more than one chunk of
+    server RAM, and the client starts receiving bytes immediately instead of
+    waiting for the full read to complete.
     """
     import jwt
     from app.services.storage import LocalBackend, content_type_for
@@ -144,13 +160,49 @@ def local_content_download(token: str = Query(...)):
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=400, detail="Invalid download token")
 
+    backend = LocalBackend()
     try:
-        data = LocalBackend().download_bytes(key)
+        file_size = backend.file_size(key)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Content not found")
 
-    return Response(
-        content=data,
-        media_type=content_type_for(key),
-        headers={"Cache-Control": "no-store"},
+    content_type = content_type_for(key)
+
+    if range_header:
+        try:
+            units, _, range_spec = range_header.partition("=")
+            start_str, _, end_str = range_spec.partition("-")
+            start = int(start_str) if start_str else 0
+            end = int(end_str) if end_str else file_size - 1
+        except ValueError:
+            raise HTTPException(status_code=416, detail="Invalid Range header")
+
+        end = min(end, file_size - 1)
+        if units != "bytes" or start < 0 or start > end or start >= file_size:
+            raise HTTPException(
+                status_code=416,
+                detail="Range not satisfiable",
+                headers={"Content-Range": f"bytes */{file_size}"},
+            )
+
+        return StreamingResponse(
+            backend.iter_range(key, start, end),
+            status_code=206,
+            media_type=content_type,
+            headers={
+                "Content-Range": f"bytes {start}-{end}/{file_size}",
+                "Accept-Ranges": "bytes",
+                "Content-Length": str(end - start + 1),
+                "Cache-Control": "no-store",
+            },
+        )
+
+    return StreamingResponse(
+        backend.iter_range(key, 0, file_size - 1),
+        media_type=content_type,
+        headers={
+            "Accept-Ranges": "bytes",
+            "Content-Length": str(file_size),
+            "Cache-Control": "no-store",
+        },
     )

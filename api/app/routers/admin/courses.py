@@ -7,13 +7,14 @@ from sqlalchemy.exc import IntegrityError
 from app.database import get_db
 from app.dependencies import require_admin, verify_csrf
 from app.models.user import User
-from app.models.course import Course, CourseStatus, CourseTarget
+from app.models.course import Course, CourseStatus, CourseTarget, Section
 from app.models.discipline import Discipline
 from app.models.level import Level
 from app.schemas.common import PaginatedResponse
 from app.schemas.course import (
     CourseCreate, CourseUpdate, CourseRead, CourseSummary,
     CourseTargetCreate, CourseTargetRead,
+    CoursePurgeRequest, CoursePurgeResponse,
 )
 from app.services.audit import audit
 
@@ -83,6 +84,11 @@ def update_course(
     actor: User = Depends(require_admin),
 ):
     course = _load_course(db, course_id)
+    if body.status == CourseStatus.published and course.status != CourseStatus.published:
+        raise HTTPException(
+            status_code=422,
+            detail="Use POST /admin/courses/{course_id}/publish to go live — it validates readiness first",
+        )
     for field, value in body.model_dump(exclude_none=True).items():
         setattr(course, field, value)
     db.flush()
@@ -105,6 +111,156 @@ def archive_course(
     course.status = CourseStatus.archived
     audit(db, actor_id=actor.id, action="archive_course", target_type="course", target_id=course_id)
     db.commit()
+
+
+@router.delete(
+    "/{course_id}/purge",
+    response_model=CoursePurgeResponse,
+    dependencies=[Depends(verify_csrf)],
+)
+def purge_course(
+    course_id: int,
+    body: CoursePurgeRequest,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_admin),
+):
+    """
+    Permanently delete a course and everything under it — sections, content,
+    quizzes/questions, targets, enrollments, section/content progress, quiz
+    attempts. This is irreversible and destroys real completion history if any
+    exists; it exists to clean up test/throwaway courses, not to retire real
+    ones (use archive for that).
+
+    Two safety gates: the course must already be off draft/archived (never
+    currently published — publish it away first if it's live), and the caller
+    must echo the exact course title back, so this can't be fired by a stray
+    click or a copy-pasted curl command without deliberately re-reading what
+    it's about to destroy.
+
+    Deletion order matters because of RESTRICT foreign keys: QuizAttempt
+    restricts Enrollment, and Enrollment restricts Course. Deleting attempts
+    then enrollments first lets everything else (SectionProgress,
+    ContentProgress, SentReminder — all CASCADE from enrollment_id) go with
+    them, and only then does deleting the course cascade cleanly through
+    sections/content/quizzes/targets.
+    """
+    from app.models.enrollment import Enrollment, QuizAttempt
+
+    course = db.get(Course, course_id)
+    if not course:
+        raise HTTPException(status_code=404, detail="Course not found")
+
+    if course.status == CourseStatus.published:
+        raise HTTPException(
+            status_code=422,
+            detail="Cannot purge a published course — archive it first",
+        )
+
+    if body.confirm_title != course.title:
+        raise HTTPException(
+            status_code=422,
+            detail="confirm_title must exactly match the course title",
+        )
+
+    title = course.title
+    enrollment_ids = [
+        row[0] for row in db.query(Enrollment.id).filter(Enrollment.course_id == course_id).all()
+    ]
+
+    attempts_deleted = 0
+    if enrollment_ids:
+        attempts_deleted = db.query(QuizAttempt).filter(
+            QuizAttempt.enrollment_id.in_(enrollment_ids)
+        ).delete(synchronize_session=False)
+
+    enrollments_deleted = 0
+    if enrollment_ids:
+        enrollments_deleted = db.query(Enrollment).filter(
+            Enrollment.id.in_(enrollment_ids)
+        ).delete(synchronize_session=False)
+
+    audit(
+        db, actor_id=actor.id, action="purge_course", target_type="course", target_id=course_id,
+        detail={"title": title, "enrollments_deleted": enrollments_deleted, "quiz_attempts_deleted": attempts_deleted},
+    )
+
+    db.delete(course)
+    db.commit()
+
+    return CoursePurgeResponse(
+        course_id=course_id,
+        title=title,
+        enrollments_deleted=enrollments_deleted,
+        quiz_attempts_deleted=attempts_deleted,
+    )
+
+
+# ── Publish gate ─────────────────────────────────────────────────────────────
+#
+# Course creation only ever produces a draft; going live is a single explicit
+# action, gated by a real readiness check rather than the free-form status
+# dropdown that used to let an empty, untargeted course go "published".
+
+def _publish_issues(db: Session, course: Course) -> List[str]:
+    issues: List[str] = []
+    sections = (
+        db.query(Section)
+        .options(joinedload(Section.content_items), joinedload(Section.quiz))
+        .filter(Section.course_id == course.id)
+        .order_by(Section.order_index)
+        .all()
+    )
+    if not sections:
+        issues.append("Add at least one section")
+    for s in sections:
+        if not s.content_items and not s.quiz:
+            issues.append(f"Section \"{s.title}\" has no content and no quiz")
+    if not course.targets:
+        issues.append("Assign at least one target audience (discipline + level)")
+    return issues
+
+
+@router.get("/{course_id}/publish-readiness")
+def publish_readiness(
+    course_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+    course = _load_course(db, course_id)
+    issues = _publish_issues(db, course)
+    return {"ready": len(issues) == 0, "issues": issues}
+
+
+@router.post("/{course_id}/publish", response_model=CourseRead, dependencies=[Depends(verify_csrf)])
+def publish_course(
+    course_id: int,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_admin),
+):
+    course = _load_course(db, course_id)
+    issues = _publish_issues(db, course)
+    if issues:
+        raise HTTPException(status_code=422, detail="Not ready to publish: " + "; ".join(issues))
+    course.status = CourseStatus.published
+    db.flush()
+    audit(db, actor_id=actor.id, action="publish_course", target_type="course", target_id=course_id)
+    db.commit()
+    return _load_course(db, course_id)
+
+
+@router.post("/{course_id}/unpublish", response_model=CourseRead, dependencies=[Depends(verify_csrf)])
+def unpublish_course(
+    course_id: int,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_admin),
+):
+    """Pull a published course back to draft — no validation needed to go this direction."""
+    course = _load_course(db, course_id)
+    course.status = CourseStatus.draft
+    db.flush()
+    audit(db, actor_id=actor.id, action="unpublish_course", target_type="course", target_id=course_id)
+    db.commit()
+    return _load_course(db, course_id)
 
 
 # ── Course targets ─────────────────────────────────────────────────────────────

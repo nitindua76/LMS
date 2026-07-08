@@ -81,6 +81,9 @@ class Enrollment(Base):
 
 class SectionProgress(Base):
     __tablename__ = "section_progress"
+    __table_args__ = (
+        UniqueConstraint("enrollment_id", "section_id", name="uq_section_progress"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     enrollment_id: Mapped[int] = mapped_column(
@@ -98,6 +101,44 @@ class SectionProgress(Base):
 
     enrollment: Mapped["Enrollment"] = relationship("Enrollment", back_populates="section_progress")
     section: Mapped["Section"] = relationship("Section", back_populates="section_progress")  # type: ignore[name-defined]
+
+
+class ContentProgress(Base):
+    """
+    Per-(enrollment, content_item) native progress — one row per video/pdf item.
+
+    This is the server-side source of truth behind the video heartbeat and the
+    PDF/embedded-video dwell endpoints: `max_watched_seconds` only ever
+    increases, and it's bounded by wall-clock time actually elapsed since
+    `first_seen_at`/`last_heartbeat_at` rather than trusting whatever value the
+    client posts. A section with multiple content items requires every item's
+    `done` flag before the section itself is marked content_done — see
+    app/services/content_progress.py.
+    """
+    __tablename__ = "content_progress"
+    __table_args__ = (
+        UniqueConstraint("enrollment_id", "content_item_id", name="uq_content_progress"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    enrollment_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("enrollments.id", ondelete="CASCADE"), nullable=False
+    )
+    content_item_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("content_items.id", ondelete="RESTRICT"), nullable=False
+    )
+    max_watched_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    done: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    last_heartbeat_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    enrollment: Mapped["Enrollment"] = relationship("Enrollment")
+    content_item: Mapped["ContentItem"] = relationship("ContentItem")  # type: ignore[name-defined]
 
 
 class QuizAttempt(Base):

@@ -7,13 +7,14 @@ from sqlalchemy.exc import IntegrityError
 from app.database import get_db
 from app.dependencies import require_admin, verify_csrf
 from app.models.user import User
-from app.models.course import Course, Section, ContentItem
+from app.models.course import Course, Section, ContentItem, ContentType
 from app.schemas.section import (
     SectionCreate, SectionUpdate, SectionRead, SectionReorder,
     ContentItemCreate, ContentItemUpdate, ContentItemRead,
 )
 from app.services.audit import audit
 from app.services import storage as store
+from app.services.upload_validation import sanitize_filename, stream_validate_and_spool, UploadValidationError
 
 router = APIRouter(prefix="/admin/courses/{course_id}/sections", tags=["admin-sections"])
 
@@ -252,7 +253,15 @@ def delete_content(
     ).first()
     if not item:
         raise HTTPException(status_code=404, detail="Content item not found")
-    db.delete(item)
+    try:
+        db.delete(item)
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Cannot delete: this content item has employee progress recorded against it",
+        )
     audit(db, actor_id=actor.id, action="delete_content_item", target_type="content_item",
           target_id=item_id)
     db.commit()
@@ -275,6 +284,13 @@ def upload_content_file(
     Upload a video or PDF file to object storage and record the storage_key on the
     content item. After this call, the employee-facing GET will serve a short-lived
     signed URL — the raw storage key is never exposed to the client.
+
+    The upload is streamed into a spooled buffer (spills to disk past 8MiB, so a
+    large file never sits fully in process memory) while enforcing a per-type size
+    cap and sniffing the file's magic bytes against the content item's declared
+    type — a mislabeled or malicious file is rejected before it ever reaches
+    storage. SCORM/cmi5 packages are not accepted here; they have their own
+    manifest-validated upload endpoint.
     """
     _get_section(db, course_id, section_id)
     item = db.query(ContentItem).filter(
@@ -283,15 +299,28 @@ def upload_content_file(
     if not item:
         raise HTTPException(status_code=404, detail="Content item not found")
 
-    filename = file.filename or f"item_{item_id}"
+    if item.type not in (ContentType.video, ContentType.pdf):
+        raise HTTPException(
+            status_code=422,
+            detail=f"Direct file upload is not supported for content type '{item.type.value}'",
+        )
+
+    try:
+        filename = sanitize_filename(file.filename or "")
+        spooled = stream_validate_and_spool(file.file, item.type)
+    except UploadValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
     storage_key = f"content/{item_id}/{filename}"
     content_type = store.content_type_for(filename)
 
     try:
         store.ensure_bucket()
-        store.upload_fileobj(storage_key, file.file, content_type)
+        store.upload_fileobj(storage_key, spooled, content_type)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Storage upload failed: {exc}")
+    finally:
+        spooled.close()
 
     item.storage_key = storage_key
     db.flush()
@@ -303,3 +332,52 @@ def upload_content_file(
     db.commit()
     db.refresh(item)
     return item
+
+
+@content_router.delete(
+    "/enrollments/{enrollment_id}/reset",
+    status_code=204,
+    dependencies=[Depends(verify_csrf)],
+)
+def admin_reset_native_progress(
+    course_id: int,
+    section_id: int,
+    enrollment_id: int,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_admin),
+):
+    """
+    Reset native (video/pdf) progress for one employee's enrollment in this
+    section — the video/PDF equivalent of the SCORM self-service reset and the
+    admin quiz-attempt reset, unifying the retry path across content types.
+    Clears SectionProgress and every per-item ContentProgress row for this
+    section, and reopens the enrollment if it had failed or completed.
+    """
+    from app.models.enrollment import Enrollment, EnrollmentStatus, SectionProgress
+    from app.services import content_progress
+
+    section = _get_section(db, course_id, section_id)
+    enrollment = db.query(Enrollment).filter(Enrollment.id == enrollment_id).first()
+    if not enrollment:
+        raise HTTPException(status_code=404, detail="Enrollment not found")
+
+    sp = db.query(SectionProgress).filter(
+        SectionProgress.enrollment_id == enrollment_id,
+        SectionProgress.section_id == section_id,
+    ).first()
+    if sp:
+        sp.content_done = False
+        sp.quiz_passed = False
+        sp.completed_at = None
+
+    content_progress.reset(db, enrollment_id, section)
+
+    if enrollment.status in (EnrollmentStatus.failed, EnrollmentStatus.completed):
+        enrollment.status = EnrollmentStatus.in_progress
+
+    audit(
+        db, actor_id=actor.id, action="reset_native_progress",
+        target_type="enrollment", target_id=enrollment_id,
+        detail={"section_id": section_id},
+    )
+    db.commit()

@@ -54,12 +54,15 @@ def _get_enrollment_section_quiz(
     if not bridge.is_section_unlocked(db, enrollment, section):
         raise HTTPException(status_code=403, detail="Section is locked")
 
-    # Must have consumed content first
+    # Must have consumed content first — note this must also block when `sp` is
+    # None (i.e. the employee has never touched this section's content at all);
+    # only checking `sp and not sp.content_done` would silently let a first-time
+    # visitor start the quiz directly, bypassing content entirely.
     sp = db.query(SectionProgress).filter(
         SectionProgress.enrollment_id == enrollment_id,
         SectionProgress.section_id == section_id,
     ).first()
-    if sp and sp.content_done is False and len(section.content_items) > 0:
+    if len(section.content_items) > 0 and (sp is None or not sp.content_done):
         raise HTTPException(status_code=403, detail="Complete the section content before taking the quiz")
 
     if not section.quiz:
@@ -178,7 +181,12 @@ def start_attempt(
             detail=f"Maximum attempts ({quiz.max_attempts}) reached. Contact an administrator to reset.",
         )
 
-    # Abandon any lingering in-progress attempt
+    # Abandon any lingering in-progress attempt — graded as a 0-score failure,
+    # not left ungraded. It already counts toward max_attempts (the
+    # completed_attempts count above includes every submitted attempt), so it
+    # must carry real score/passed/submitted_at data or anything downstream
+    # that assumes "submitted implies graded" breaks (analytics did, exactly
+    # this way, on a row already in the database before this fix).
     old = db.query(QuizAttempt).filter(
         QuizAttempt.quiz_id == quiz.id,
         QuizAttempt.enrollment_id == enrollment_id,
@@ -186,6 +194,9 @@ def start_attempt(
     ).first()
     if old:
         old.status = QuizAttemptStatus.submitted
+        old.score_pct = 0
+        old.passed = False
+        old.submitted_at = datetime.now(timezone.utc)
         db.flush()
 
     questions = sorted(quiz.questions, key=lambda q: q.order_index)

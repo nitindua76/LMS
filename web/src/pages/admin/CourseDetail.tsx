@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   coursesApi, sectionsApi, contentApi, quizzesApi,
@@ -16,7 +16,9 @@ export default function CourseDetail() {
   const { id } = useParams<{ id: string }>();
   const courseId = Number(id);
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const [err, setErr] = useState("");
+  const [tab, setTab] = useState<"content" | "publish">("content");
 
   // ── Data ──────────────────────────────────────────────────────────────────
   const { data: course, isLoading } = useQuery({
@@ -30,6 +32,54 @@ export default function CourseDetail() {
   });
   const { data: disciplines } = useQuery({ queryKey: ["disciplines"], queryFn: () => disciplinesApi.list() });
   const { data: levels } = useQuery({ queryKey: ["levels"], queryFn: () => levelsApi.list() });
+  const { data: readiness } = useQuery({
+    queryKey: ["course-publish-readiness", courseId],
+    queryFn: () => coursesApi.publishReadiness(courseId),
+    enabled: !!courseId,
+  });
+
+  const publishMut = useMutation({
+    mutationFn: () => coursesApi.publish(courseId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["course", courseId] });
+      qc.invalidateQueries({ queryKey: ["course-publish-readiness", courseId] });
+    },
+    onError: (e) => setErr(getErrorMessage(e)),
+  });
+  const unpublishMut = useMutation({
+    mutationFn: () => coursesApi.unpublish(courseId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["course", courseId] });
+      qc.invalidateQueries({ queryKey: ["course-publish-readiness", courseId] });
+    },
+    onError: (e) => setErr(getErrorMessage(e)),
+  });
+
+  const purgeMut = useMutation({
+    mutationFn: (confirmTitle: string) => coursesApi.purge(courseId, confirmTitle),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["analytics"] });
+      navigate("/admin/courses");
+    },
+    onError: (e) => setErr(getErrorMessage(e)),
+  });
+
+  const handlePurge = () => {
+    if (!course) return;
+    if (course.status === "published") {
+      setErr("Unpublish or archive this course before deleting it permanently.");
+      return;
+    }
+    const typed = window.prompt(
+      `This permanently deletes "${course.title}" and everything under it — sections, content, quizzes, targets, and any enrollment/progress/quiz-attempt history. This cannot be undone.\n\nType the course title exactly to confirm:`
+    );
+    if (typed === null) return; // cancelled
+    if (typed !== course.title) {
+      setErr("Course title didn't match — nothing was deleted.");
+      return;
+    }
+    purgeMut.mutate(typed);
+  };
 
   // ── Section form ──────────────────────────────────────────────────────────
   const [newSectionTitle, setNewSectionTitle] = useState("");
@@ -173,9 +223,35 @@ export default function CourseDetail() {
           <span className={`badge ${STATUS_BADGE[course.status]}`}>{course.status}</span>
           {course.mandatory && <span className="badge badge-red">Mandatory</span>}
         </div>
-        <Link to={`/admin/courses/${courseId}/edit`}>
-          <button className="btn-ghost">Edit Course</button>
-        </Link>
+        <div style={{ display: "flex", gap: 8 }}>
+          <Link to={`/admin/courses/${courseId}/edit`}>
+            <button className="btn-ghost">Edit Course</button>
+          </Link>
+          {course.status === "published" ? (
+            <button className="btn-secondary" onClick={() => unpublishMut.mutate()} disabled={unpublishMut.isPending}>
+              {unpublishMut.isPending ? "Unpublishing…" : "Unpublish"}
+            </button>
+          ) : (
+            <>
+              <button
+                className="btn-primary"
+                onClick={() => publishMut.mutate()}
+                disabled={publishMut.isPending || !readiness?.ready}
+                title={readiness && !readiness.ready ? readiness.issues.join("; ") : "Publish this course"}
+              >
+                {publishMut.isPending ? "Publishing…" : "Publish Course"}
+              </button>
+              <button
+                className="btn-danger"
+                onClick={handlePurge}
+                disabled={purgeMut.isPending}
+                title="Permanently delete this course and all its data — cannot be undone"
+              >
+                {purgeMut.isPending ? "Deleting…" : "Delete Permanently"}
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       {err && <div style={{ color: "var(--danger)", marginBottom: 12 }}>{err}</div>}
@@ -190,7 +266,40 @@ export default function CourseDetail() {
         {course.description && <p style={{ marginTop: 12, color: "var(--text-muted)", fontSize: 13 }}>{course.description}</p>}
       </div>
 
-      {/* Targets */}
+      {/* Two-phase authoring: Content first, then Targeting & Publish */}
+      <div style={{ display: "flex", gap: 4, marginBottom: 20, borderBottom: "1px solid var(--border)" }}>
+        {(["content", "publish"] as const).map((t) => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            className="btn-ghost"
+            style={{
+              padding: "8px 16px",
+              borderRadius: "6px 6px 0 0",
+              borderBottom: tab === t ? "2px solid var(--primary)" : "2px solid transparent",
+              fontWeight: tab === t ? 600 : 500,
+              color: tab === t ? "var(--text)" : "var(--text-muted)",
+            }}
+          >
+            {t === "content" ? "1. Content" : "2. Targeting & Publish"}
+          </button>
+        ))}
+      </div>
+
+      {tab === "publish" && (
+      <div className="card" style={{ marginBottom: 24, borderColor: readiness && !readiness.ready ? "var(--warning)" : undefined }}>
+        <h3 style={{ marginBottom: 12, fontSize: 14, fontWeight: 600 }}>Publish Readiness</h3>
+        {readiness?.ready ? (
+          <p style={{ fontSize: 13, color: "var(--success)" }}>✓ Ready to publish.</p>
+        ) : (
+          <ul style={{ margin: 0, paddingLeft: 20, fontSize: 13, color: "var(--text-muted)" }}>
+            {readiness?.issues.map((issue) => <li key={issue}>{issue}</li>)}
+          </ul>
+        )}
+      </div>
+      )}
+
+      {tab === "publish" && (
       <div className="card" style={{ marginBottom: 24 }}>
         <h3 style={{ marginBottom: 12, fontSize: 14, fontWeight: 600 }}>Assignment Targets</h3>
         <p style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 16 }}>
@@ -418,8 +527,10 @@ export default function CourseDetail() {
           )}
         </div>
       </div>
+      )}
 
       {/* Sections */}
+      {tab === "content" && (
       <div className="card">
         <h3 style={{ marginBottom: 16, fontSize: 14, fontWeight: 600 }}>Sections</h3>
         {sections?.map((s: Section) => (
@@ -440,6 +551,7 @@ export default function CourseDetail() {
           </button>
         </div>
       </div>
+      )}
     </div>
   );
 }
@@ -487,6 +599,13 @@ function SectionRow({ section, courseId, onError }: { section: Section; courseId
     onError: (e) => onError(getErrorMessage(e)),
   });
 
+  const uploadFileMut = useMutation({
+    mutationFn: ({ itemId, file }: { itemId: number; file: File }) =>
+      contentApi.uploadFile(courseId, section.id, itemId, file),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["sections", courseId] }),
+    onError: (e) => onError(getErrorMessage(e)),
+  });
+
   return (
     <div style={{ border: "1px solid var(--border)", borderRadius: 4, marginBottom: 8 }}>
       <div style={{ display: "flex", alignItems: "center", padding: "10px 14px", gap: 8, cursor: "pointer" }}
@@ -527,7 +646,30 @@ function SectionRow({ section, courseId, onError }: { section: Section; courseId
                 }`}>{ci.type}</span>
                 <span style={{ flex: 1, fontSize: 12, color: "var(--text-muted)", wordBreak: "break-all" }}>{ci.url}</span>
                 {ci.video_duration_sec && <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{Math.round(ci.video_duration_sec / 60)}m</span>}
-                
+
+                {(ci.type === "video" || ci.type === "pdf") && (
+                  <>
+                    <span className={`badge ${ci.storage_key ? "badge-green" : "badge-gray"}`} style={{ fontSize: 10 }}>
+                      {ci.storage_key ? "File uploaded" : "External link"}
+                    </span>
+                    <label className="btn-ghost" style={{ padding: "2px 8px", fontSize: 11, cursor: "pointer", display: "inline-flex", alignItems: "center", margin: 0 }}>
+                      {uploadFileMut.isPending && uploadFileMut.variables?.itemId === ci.id
+                        ? "Uploading..."
+                        : ci.storage_key ? "Replace File" : "Upload File"}
+                      <input
+                        type="file"
+                        accept={ci.type === "video" ? "video/*" : "application/pdf"}
+                        style={{ display: "none" }}
+                        disabled={uploadFileMut.isPending}
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) uploadFileMut.mutate({ itemId: ci.id, file });
+                        }}
+                      />
+                    </label>
+                  </>
+                )}
+
                 {/* SCORM/cmi5 package zip upload */}
                 <label className="btn-ghost" style={{ padding: "2px 8px", fontSize: 11, cursor: "pointer", display: "inline-flex", alignItems: "center", margin: 0 }}>
                   {uploadPackageMut.isPending && uploadPackageMut.variables?.itemId === ci.id ? "Uploading..." : "Upload ZIP"}
@@ -553,7 +695,12 @@ function SectionRow({ section, courseId, onError }: { section: Section; courseId
                 <option value="video">Video</option>
                 <option value="pdf">PDF</option>
               </select>
-              <input placeholder="URL / path" value={newContent.url} onChange={(e) => setNewContent(c => ({ ...c, url: e.target.value }))} />
+              <input
+                placeholder={newContent.type === "video" ? "YouTube/video URL, or a title if uploading a file" : "PDF URL, or a title if uploading a file"}
+                value={newContent.url}
+                onChange={(e) => setNewContent(c => ({ ...c, url: e.target.value }))}
+                style={{ flex: 1 }}
+              />
               {newContent.type === "video" && (
                 <input type="number" placeholder="Duration (sec)" value={newContent.video_duration_sec}
                   onChange={(e) => setNewContent(c => ({ ...c, video_duration_sec: e.target.value }))} style={{ width: 120 }} />

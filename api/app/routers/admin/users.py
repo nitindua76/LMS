@@ -13,8 +13,11 @@ from app.models.discipline import Discipline
 from app.models.level import Level
 from app.schemas.common import PaginatedResponse
 from app.schemas.user import UserCreate, UserUpdate, UserRead, UserSummary, UserResetPassword, CSVRowResult
+from app.schemas.controller import SetControllerRequest
 from app.services import auth as auth_svc
 from app.services.audit import audit
+from app.services.controller import assign_controller, ControllerAssignmentError
+from app.models.controller_history import ControllerAssignmentSource
 from app.services.redis_client import get_redis
 
 router = APIRouter(prefix="/admin/users", tags=["admin-users"])
@@ -192,6 +195,37 @@ def reset_password(
     audit(db, actor_id=actor.id, action="reset_password", target_type="user", target_id=user_id)
     db.commit()
     return {"message": "Password reset. User will be prompted to change it on next login."}
+
+
+@router.put("/{user_id}/controller", response_model=UserRead, dependencies=[Depends(verify_csrf)])
+def set_controller(
+    user_id: int,
+    body: SetControllerRequest,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_admin),
+):
+    """
+    Manually assign (or clear) a user's controlling officer. This is the interim
+    path until the company HR API sync is wired up, and remains the correction
+    path afterwards.
+    """
+    user = _load_user(db, user_id)
+    new_controller = None
+    if body.controller_id is not None:
+        new_controller = db.get(User, body.controller_id)
+        if not new_controller:
+            raise HTTPException(status_code=422, detail="Controller not found")
+
+    try:
+        assign_controller(
+            db, user=user, new_controller=new_controller,
+            source=ControllerAssignmentSource.manual, actor_id=actor.id,
+        )
+    except ControllerAssignmentError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    db.commit()
+    return _load_user(db, user.id)
 
 
 @router.post("/import/csv", response_model=List[CSVRowResult], dependencies=[Depends(verify_csrf)])

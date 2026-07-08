@@ -166,7 +166,7 @@ export default function CourseDrilldown({ courseId, onClose }: CourseDrilldownPr
                               <td>
                                 <span className={`badge ${s.status === "completed" ? "badge-green" : s.status === "in_progress" ? "badge-blue" : "badge-gray"
                                   }`}>
-                                  {s.status.replace("_", " ")}
+                                  {(s.status ?? "not_enrolled").replace("_", " ")}
                                 </span>
                               </td>
                               <td style={{ textAlign: "right", fontWeight: 600 }}>{s.progress}%</td>
@@ -174,7 +174,7 @@ export default function CourseDrilldown({ courseId, onClose }: CourseDrilldownPr
                                 {s.quiz_score !== null ? `${s.quiz_score}%` : "—"}
                               </td>
                               <td style={{ fontSize: 12 }}>{formatDate(s.started_at)}</td>
-                              <td style={{ fontSize: 12 }}>{formatDate(s.completed_at)}</td>
+                              <td style={{ fontSize: 12 }}>{formatDate(s.completed_at ?? null)}</td>
                             </tr>
                           ))
                         )}

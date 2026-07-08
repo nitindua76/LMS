@@ -1,12 +1,16 @@
 import { useState, useEffect } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { coursesApi } from "../../api/admin";
+import { coursesApi, Course } from "../../api/admin";
 import { getErrorMessage } from "../../api/client";
 
-const EMPTY = {
+const EMPTY: {
+  title: string; description: string; intro: string; duration_days: string; mandatory: boolean;
+  passing_pct: number; max_attempts: number; start_date: string; enroll_close_date: string;
+  status: Course["status"];
+} = {
   title: "", description: "", intro: "", duration_days: "", mandatory: false,
-  passing_pct: 70, max_attempts: 3, start_date: "", enroll_close_date: "", status: "draft" as const,
+  passing_pct: 70, max_attempts: 3, start_date: "", enroll_close_date: "", status: "draft",
 };
 
 export default function CourseForm() {
@@ -114,11 +118,16 @@ export default function CourseForm() {
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }} className="form-group">
           <div>
             <label>Status</label>
-            <select value={form.status} onChange={F("status")}>
+            <select value={form.status} onChange={F("status")} disabled={form.status === "published"}>
               <option value="draft">Draft</option>
-              <option value="published">Published</option>
+              {form.status === "published" && <option value="published">Published</option>}
               <option value="archived">Archived</option>
             </select>
+            {form.status === "published" && (
+              <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
+                Use "Unpublish" on the course page to pull this back to draft.
+              </p>
+            )}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8, paddingTop: 20 }}>
             <input type="checkbox" id="mandatory" checked={form.mandatory}

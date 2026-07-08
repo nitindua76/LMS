@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { analyticsApi, disciplinesApi, levelsApi, CourseAnalyticsSummary, EmployeeAnalyticsSummary } from "../../api/admin";
+import CourseDrilldown from "../../components/admin/CourseDrilldown";
+import EmployeeDrilldown from "../../components/admin/EmployeeDrilldown";
 
 export default function Dashboard() {
   const [activeTab, setActiveTab] = useState<"courses" | "employees">("courses");
@@ -8,6 +10,8 @@ export default function Dashboard() {
   const [courseStatus, setCourseStatus] = useState("");
   const [disciplineId, setDisciplineId] = useState("");
   const [levelId, setLevelId] = useState("");
+  const [drilldownCourseId, setDrilldownCourseId] = useState<number | null>(null);
+  const [drilldownEmployeeId, setDrilldownEmployeeId] = useState<number | null>(null);
 
   // Expander states (allows expanding multiple items concurrently for comparison)
   const [expandedCourses, setExpandedCourses] = useState<Record<number, boolean>>({});
@@ -342,8 +346,14 @@ export default function Dashboard() {
                             }}
                             className="hover-row"
                           >
-                            <td style={{ padding: "14px 16px", fontWeight: 600, color: "var(--accent)" }}>
-                              {c.title}
+                            <td style={{ padding: "14px 16px", fontWeight: 600 }}>
+                              <span
+                                onClick={(e) => { e.stopPropagation(); setDrilldownCourseId(c.id); }}
+                                style={{ color: "var(--accent)", cursor: "pointer", textDecoration: "underline" }}
+                                title="View full course detail"
+                              >
+                                {c.title}
+                              </span>
                             </td>
                             <td>
                               <span className={`badge ${c.status === "published" ? "badge-green" : c.status === "draft" ? "badge-yellow" : "badge-gray"
@@ -539,8 +549,14 @@ export default function Dashboard() {
                             }}
                             className="hover-row"
                           >
-                            <td style={{ padding: "14px 16px", fontWeight: 600, color: "var(--accent)" }}>
-                              {e.name}
+                            <td style={{ padding: "14px 16px", fontWeight: 600 }}>
+                              <span
+                                onClick={(ev) => { ev.stopPropagation(); setDrilldownEmployeeId(e.id); }}
+                                style={{ color: "var(--accent)", cursor: "pointer", textDecoration: "underline" }}
+                                title="View full employee detail"
+                              >
+                                {e.name}
+                              </span>
                             </td>
                             <td style={{ color: "var(--text-muted)", fontSize: 12 }}>{e.email}</td>
                             <td>{e.discipline}</td>
@@ -656,6 +672,13 @@ export default function Dashboard() {
           )
         )}
       </div>
+
+      {drilldownCourseId !== null && (
+        <CourseDrilldown courseId={drilldownCourseId} onClose={() => setDrilldownCourseId(null)} />
+      )}
+      {drilldownEmployeeId !== null && (
+        <EmployeeDrilldown employeeId={drilldownEmployeeId} onClose={() => setDrilldownEmployeeId(null)} />
+      )}
     </div>
   );
 }

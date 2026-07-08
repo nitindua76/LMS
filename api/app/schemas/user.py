@@ -61,6 +61,7 @@ class UserRead(BaseModel):
     force_password_change: bool
     discipline_id: Optional[int] = None
     level_id: Optional[int] = None
+    controller_id: Optional[int] = None
     discipline: Optional[DisciplineRead] = None
     level: Optional[LevelRead] = None
     created_at: datetime

@@ -11,7 +11,7 @@ import abc
 import io
 import time
 from pathlib import Path
-from typing import BinaryIO
+from typing import BinaryIO, Iterator
 
 
 class StorageBackend(abc.ABC):
@@ -114,15 +114,47 @@ class LocalBackend(StorageBackend):
         dest.write_bytes(data)
 
     def upload_fileobj(self, key: str, fileobj: BinaryIO, content_type: str = "application/octet-stream") -> None:
+        import shutil
         dest = self._root / key
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(fileobj.read())
+        with dest.open("wb") as out:
+            shutil.copyfileobj(fileobj, out)
 
     def download_bytes(self, key: str) -> bytes:
         p = self._root / key
         if not p.exists():
             raise FileNotFoundError(f"Storage key not found: {key}")
         return p.read_bytes()
+
+    def file_size(self, key: str) -> int:
+        p = self._root / key
+        if not p.exists():
+            raise FileNotFoundError(f"Storage key not found: {key}")
+        return p.stat().st_size
+
+    DEFAULT_STREAM_CHUNK_SIZE = 1024 * 1024  # 1 MiB
+
+    def iter_range(self, key: str, start: int, end: int, chunk_size: int = DEFAULT_STREAM_CHUNK_SIZE) -> Iterator[bytes]:
+        """
+        Stream the inclusive byte range [start, end] in fixed-size chunks — the
+        server never holds more than one chunk in memory, regardless of how
+        large the requested range is (including a "no Range header" request
+        for the whole file, which is start=0, end=file_size-1). This is what
+        makes both video seeking (206 Partial Content) and plain full-file
+        playback avoid loading a multi-hundred-MB video into RAM per request.
+        """
+        p = self._root / key
+        if not p.exists():
+            raise FileNotFoundError(f"Storage key not found: {key}")
+        remaining = end - start + 1
+        with p.open("rb") as f:
+            f.seek(start)
+            while remaining > 0:
+                chunk = f.read(min(chunk_size, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+                yield chunk
 
     def signed_url(self, key: str, expires: int = 3600) -> str:
         """Return a short-lived signed download URL handled by /api/content/download."""

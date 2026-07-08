@@ -120,16 +120,28 @@ export const coursesApi = {
   update: (id: number, data: Partial<Course>) =>
     client.put<Course>(`/admin/courses/${id}`, data).then((r) => r.data),
   archive: (id: number) => client.delete(`/admin/courses/${id}`),
+  purge: (id: number, confirmTitle: string) =>
+    client
+      .delete<{ course_id: number; title: string; enrollments_deleted: number; quiz_attempts_deleted: number }>(
+        `/admin/courses/${id}/purge`,
+        { data: { confirm_title: confirmTitle } }
+      )
+      .then((r) => r.data),
   addTarget: (courseId: number, data: { discipline_id: number; level_id: number }) =>
     client.post<CourseTarget>(`/admin/courses/${courseId}/targets`, data).then((r) => r.data),
   removeTarget: (courseId: number, targetId: number) =>
     client.delete(`/admin/courses/${courseId}/targets/${targetId}`),
+  publishReadiness: (id: number) =>
+    client.get<{ ready: boolean; issues: string[] }>(`/admin/courses/${id}/publish-readiness`).then((r) => r.data),
+  publish: (id: number) => client.post<Course>(`/admin/courses/${id}/publish`, {}).then((r) => r.data),
+  unpublish: (id: number) => client.post<Course>(`/admin/courses/${id}/unpublish`, {}).then((r) => r.data),
 };
 
 // ── Sections & Content ────────────────────────────────────────────────────────
 export interface ContentItem {
   id: number; section_id: number; order_index: number;
   type: "video" | "pdf" | "scorm" | "cmi5"; url: string; video_duration_sec: number | null;
+  storage_key: string | null;
 }
 
 export interface Section {
@@ -157,6 +169,13 @@ export const contentApi = {
     client.put<ContentItem>(`/admin/courses/${courseId}/sections/${sectionId}/content/${itemId}`, data).then((r) => r.data),
   delete: (courseId: number, sectionId: number, itemId: number) =>
     client.delete(`/admin/courses/${courseId}/sections/${sectionId}/content/${itemId}`),
+  uploadFile: (courseId: number, sectionId: number, itemId: number, file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return client
+      .post<ContentItem>(`/admin/courses/${courseId}/sections/${sectionId}/content/${itemId}/upload`, fd)
+      .then((r) => r.data);
+  },
 };
 
 // ── Quizzes ────────────────────────────────────────────────────────────────────
@@ -210,6 +229,12 @@ export interface CourseStudentProgress {
   progress: number;
   quiz_score: number | null;
   started_at: string | null;
+  completed_at?: string | null;
+  status?: "completed" | "in_progress" | "not_enrolled";
+}
+
+export interface CourseAnalyticsDetail extends CourseAnalyticsSummary {
+  students: CourseStudentProgress[];
 }
 
 export interface CourseScormStat {
@@ -254,6 +279,15 @@ export interface EmployeeActivityEvent {
   type: "completion" | "quiz";
 }
 
+export interface EmployeeCourseProgress {
+  course_id: number;
+  title: string;
+  status: "completed" | "in_progress" | "not_enrolled";
+  progress: number;
+  quiz_score: number | null;
+  time_spent_hours: number;
+}
+
 export interface EmployeeAnalyticsSummary {
   id: number;
   name: string;
@@ -267,9 +301,16 @@ export interface EmployeeAnalyticsSummary {
   timeline: EmployeeActivityEvent[];
 }
 
+export interface EmployeeAnalyticsDetail extends EmployeeAnalyticsSummary {
+  active: boolean;
+  courses: EmployeeCourseProgress[];
+}
+
 export const analyticsApi = {
   overview: () => client.get<AnalyticsOverview>("/admin/analytics/overview").then((r) => r.data),
   courses: () => client.get<CourseAnalyticsSummary[]>("/admin/analytics/courses").then((r) => r.data),
+  courseDetail: (id: number) => client.get<CourseAnalyticsDetail>(`/admin/analytics/courses/${id}`).then((r) => r.data),
   employees: () => client.get<EmployeeAnalyticsSummary[]>("/admin/analytics/employees").then((r) => r.data),
+  employeeDetail: (id: number) => client.get<EmployeeAnalyticsDetail>(`/admin/analytics/employees/${id}`).then((r) => r.data),
 };
 

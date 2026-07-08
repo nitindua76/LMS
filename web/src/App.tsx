@@ -15,6 +15,9 @@ import CourseDetail from "./pages/admin/CourseDetail";
 import MyCourses from "./pages/employee/MyCourses";
 import MyCourseDetail from "./pages/employee/MyCourseDetail";
 import SectionPlayer from "./pages/employee/SectionPlayer";
+import MyTeam from "./pages/employee/MyTeam";
+import TeamMemberCourses from "./pages/employee/TeamMemberCourses";
+import TeamMemberCourseDetail from "./pages/employee/TeamMemberCourseDetail";
 
 function RootRedirect() {
   const { user, loading } = useAuth();
@@ -67,6 +70,9 @@ export default function App() {
             path="courses/:courseId/enrollments/:enrollmentId/sections/:sectionId"
             element={<SectionPlayer />}
           />
+          <Route path="team" element={<MyTeam />} />
+          <Route path="team/:memberId" element={<TeamMemberCourses />} />
+          <Route path="team/:memberId/courses/:courseId" element={<TeamMemberCourseDetail />} />
         </Route>
 
         <Route path="*" element={<Navigate to="/" replace />} />

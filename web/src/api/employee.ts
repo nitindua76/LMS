@@ -17,6 +17,8 @@ export interface ContentItem {
   type: "video" | "pdf" | "scorm" | "cmi5";
   title?: string;
   url?: string;
+  video_duration_sec?: number | null;
+  resume_seconds?: number;
 }
 
 export interface SectionDetail {
@@ -70,9 +72,53 @@ export interface AttemptResponse {
   timed_out?: boolean;
 }
 
+export interface TeamMember {
+  id: number;
+  name: string;
+  email: string;
+  discipline: { id: number; name: string } | null;
+  level: { id: number; code: string; name: string; rank: number } | null;
+}
+
+export interface TeamMemberSectionScore {
+  section_id: number;
+  title: string;
+  order_index: number;
+  content_done: boolean;
+  quiz_passed: boolean | null;
+  completed_at: string | null;
+  has_quiz: boolean;
+  best_score_pct: number | null;
+  attempts_used: number;
+  content_pct: number | null;
+}
+
+export interface TeamMemberCourseDetail {
+  id: number;
+  title: string;
+  mandatory: boolean;
+  state: string;
+  lock_reason: string | null;
+  deadline_at: string | null;
+  enrollment_id: number | null;
+  started_at: string | null;
+  sections: TeamMemberSectionScore[];
+}
+
 export const employeeApi = {
   myCourses: () =>
     client.get<CourseState[]>("/my/courses").then((r) => r.data),
+
+  myTeam: () =>
+    client.get<TeamMember[]>("/my/team").then((r) => r.data),
+
+  teamMemberCourses: (memberId: number) =>
+    client.get<CourseState[]>(`/my/team/${memberId}/courses`).then((r) => r.data),
+
+  teamMemberCourseDetail: (memberId: number, courseId: number) =>
+    client
+      .get<TeamMemberCourseDetail>(`/my/team/${memberId}/courses/${courseId}`)
+      .then((r) => r.data),
 
   courseDetail: (id: number) =>
     client.get<CourseDetail>(`/my/courses/${id}`).then((r) => r.data),
@@ -92,6 +138,14 @@ export const employeeApi = {
   markPdfRead: (enrollmentId: number, sectionId: number, itemId: number, dwellSeconds: number) =>
     client
       .post(`/my/enrollments/${enrollmentId}/sections/${sectionId}/content/${itemId}/mark-read`, {
+        dwell_seconds: dwellSeconds,
+      })
+      .then((r) => r.data),
+
+  // Embedded/external video (e.g. YouTube) — dwell-based completion
+  markVideoWatched: (enrollmentId: number, sectionId: number, itemId: number, dwellSeconds: number) =>
+    client
+      .post(`/my/enrollments/${enrollmentId}/sections/${sectionId}/content/${itemId}/mark-watched`, {
         dwell_seconds: dwellSeconds,
       })
       .then((r) => r.data),

@@ -4,6 +4,37 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { employeeApi, SectionDetail } from "../../api/employee";
 import QuizRunner from "../../components/QuizRunner";
 
+/**
+ * Returns a YouTube embed URL if `url` is a recognizable YouTube link
+ * (watch?v=, youtu.be/, shorts/, or already an /embed/ URL), else null.
+ * Direct video files (uploaded mp4/webm, or other external file links) fall
+ * through to the plain <video> element instead.
+ */
+function getYouTubeEmbedUrl(url: string): string | null {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.replace(/^www\./, "");
+    if (host === "youtu.be") {
+      const id = u.pathname.slice(1);
+      return id ? `https://www.youtube.com/embed/${id}` : null;
+    }
+    if (host === "youtube.com" || host === "m.youtube.com") {
+      if (u.pathname === "/watch") {
+        const id = u.searchParams.get("v");
+        return id ? `https://www.youtube.com/embed/${id}` : null;
+      }
+      if (u.pathname.startsWith("/embed/")) return url;
+      if (u.pathname.startsWith("/shorts/")) {
+        const id = u.pathname.split("/")[2];
+        return id ? `https://www.youtube.com/embed/${id}` : null;
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export default function SectionPlayer() {
   const { courseId, enrollmentId, sectionId } = useParams<{
     courseId: string;
@@ -23,6 +54,10 @@ export default function SectionPlayer() {
 
   const section: SectionDetail | undefined = course?.sections.find((s) => s.id === sId);
   const item = section?.content_items[0];
+  const youTubeEmbedUrl = item?.type === "video" && item.url ? getYouTubeEmbedUrl(item.url) : null;
+  const videoMinimumDwell = item?.video_duration_sec
+    ? Math.min(Math.round(item.video_duration_sec * 0.6), 300)
+    : 30;
 
   const getPackageId = () => {
     if (!item?.url) return null;
@@ -45,6 +80,9 @@ export default function SectionPlayer() {
   const [contentDone, setContentDone] = useState(false);
   const [pdfDwell, setPdfDwell] = useState(0);
   const [pdfSubmitted, setPdfSubmitted] = useState(false);
+  const [videoDwell, setVideoDwell] = useState(0);
+  const [videoWatchedSubmitted, setVideoWatchedSubmitted] = useState(false);
+  const [pdfMaximized, setPdfMaximized] = useState(false);
   const [scormComplete, setScormComplete] = useState(false);
   const [quizResult, setQuizResult] = useState<{ passed: boolean; score: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -59,6 +97,7 @@ export default function SectionPlayer() {
   const quizScore = activeScoProgress?.score_raw;
   const successStatus = activeScoProgress?.success_status;
   const videoRef = useRef<HTMLVideoElement>(null);
+  const resumedItemIdRef = useRef<number | null>(null);
   const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pdfTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -111,11 +150,22 @@ export default function SectionPlayer() {
     }
   }, [section?.id, section?.content_done, section?.quiz_passed, section?.has_quiz]);
 
-  // VIDEO HEARTBEAT
+  // VIDEO HEARTBEAT (direct-file playback only — embedded/YouTube uses the dwell timer instead)
+  //
+  // Sent on a shorter interval AND immediately on pause/ended — relying on the
+  // interval alone means a short video can finish playing between ticks
+  // without ever reporting near-100% watched time (the last heartbeat before
+  // "ended" can land just under the completion threshold, and nothing fires
+  // again once playback stops), so completion could lag by up to a full
+  // interval or silently never register. The server-side anti-spoof bound
+  // (content_progress.py) is unaffected by how often we ask — it's still
+  // limited by real wall-clock time elapsed, so firing more often doesn't
+  // weaken it, it just makes legitimate progress register promptly.
+  const sendHeartbeatRef = useRef<() => Promise<void>>(async () => {});
   useEffect(() => {
-    if (!item || item.type !== "video" || !item.url) return;
+    if (!item || item.type !== "video" || !item.url || youTubeEmbedUrl) return;
 
-    heartbeatRef.current = setInterval(async () => {
+    const sendHeartbeat = async () => {
       const video = videoRef.current;
       if (!video || !eId || !sId || !item.id) return;
       try {
@@ -130,8 +180,10 @@ export default function SectionPlayer() {
           }
         }
       } catch {}
-    }, 15_000);
+    };
+    sendHeartbeatRef.current = sendHeartbeat;
 
+    heartbeatRef.current = setInterval(sendHeartbeat, 8_000);
     return () => {
       if (heartbeatRef.current) clearInterval(heartbeatRef.current);
     };
@@ -145,6 +197,41 @@ export default function SectionPlayer() {
       if (pdfTimerRef.current) clearInterval(pdfTimerRef.current);
     };
   }, [item?.id]);
+
+  // Close maximized PDF view with Escape
+  useEffect(() => {
+    if (!pdfMaximized) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setPdfMaximized(false);
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [pdfMaximized]);
+
+  // EMBEDDED VIDEO (e.g. YouTube) DWELL TIMER — no cross-origin access to the
+  // iframe's player, so watch time is approximated the same way PDF dwell is.
+  const videoDwellTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(() => {
+    if (!youTubeEmbedUrl) return;
+    videoDwellTimerRef.current = setInterval(() => setVideoDwell((d) => d + 1), 1000);
+    return () => {
+      if (videoDwellTimerRef.current) clearInterval(videoDwellTimerRef.current);
+    };
+  }, [item?.id, youTubeEmbedUrl]);
+
+  // "TOUCH" ON OPEN — the server bounds a dwell claim by wall-clock time elapsed
+  // since it first saw this content item, so that anchor needs to be set as
+  // soon as the viewer opens the item, not only when they click Mark as
+  // Read/Watched at the end. This fires once per item with dwell_seconds: 0
+  // purely to seed that timestamp; the expected rejection is ignored.
+  useEffect(() => {
+    if (!item || !eId || !sId) return;
+    if (item.type === "pdf") {
+      employeeApi.markPdfRead(eId, sId, item.id, 0).catch(() => {});
+    } else if (item.type === "video" && youTubeEmbedUrl) {
+      employeeApi.markVideoWatched(eId, sId, item.id, 0).catch(() => {});
+    }
+  }, [item?.id, item?.type, youTubeEmbedUrl, eId, sId]);
 
   // Fetch and parse SCORM manifest to build the Table of Contents
   useEffect(() => {
@@ -267,6 +354,27 @@ export default function SectionPlayer() {
       }
     } catch (e: any) {
       setError(e?.response?.data?.detail ?? "Failed to mark as read");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleMarkVideoWatched = async () => {
+    if (!item || !eId || !sId) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await employeeApi.markVideoWatched(eId, sId, item.id, videoDwell);
+      setVideoWatchedSubmitted(true);
+      setContentDone(true);
+      queryClient.invalidateQueries({ queryKey: ["my-course", cId] });
+      if (res.section_complete || !section?.has_quiz) {
+        setPhase(res.section_complete ? "done" : "quiz");
+      } else {
+        setPhase("quiz");
+      }
+    } catch (e: any) {
+      setError(e?.response?.data?.detail ?? "Failed to mark video as watched");
     } finally {
       setLoading(false);
     }
@@ -437,22 +545,71 @@ export default function SectionPlayer() {
       {/* Content player area */}
       {(phase === "content" || phase === "done") && item && (
         <div className={isScorm ? "" : "card"} style={{ marginBottom: isScorm ? 0 : 24, display: isScorm ? "flex" : "block", flexDirection: "column", flex: isScorm ? 1 : "none", minHeight: 0 }}>
-          {item.type === "video" && item.url && (
+          {item.type === "video" && item.url && youTubeEmbedUrl && (
+            <div>
+              <div style={{ position: "relative", width: "100%", paddingTop: "56.25%", borderRadius: 8, overflow: "hidden", background: "#000" }}>
+                <iframe
+                  src={youTubeEmbedUrl}
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                  allowFullScreen
+                  style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", border: "none" }}
+                  title={item.title || "Video"}
+                />
+              </div>
+              <div style={{ marginTop: 16, display: "flex", alignItems: "center", gap: 12 }}>
+                <span style={{ fontSize: 13, color: "var(--text-muted)" }}>
+                  Time spent: {videoDwell}s {videoDwell < videoMinimumDwell && `(need ${videoMinimumDwell - videoDwell}s more)`}
+                </span>
+                <button
+                  className="btn-primary"
+                  disabled={videoDwell < videoMinimumDwell || videoWatchedSubmitted || contentDone || loading}
+                  onClick={handleMarkVideoWatched}
+                >
+                  {loading ? "Marking…" : (videoWatchedSubmitted || contentDone) ? "Marked as Watched" : "Mark as Watched"}
+                </button>
+              </div>
+              {error && <p style={{ color: "var(--danger)", fontSize: 12, marginTop: 8 }}>{error}</p>}
+            </div>
+          )}
+
+          {item.type === "video" && item.url && !youTubeEmbedUrl && (
             <div>
               <video
                 ref={videoRef}
                 src={item.url}
                 controls
+                onLoadedMetadata={(e) => {
+                  // Resume from where the employee left off, once per item —
+                  // don't re-seek on later metadata events (e.g. after the
+                  // user has already scrubbed around).
+                  if (resumedItemIdRef.current === item.id) return;
+                  resumedItemIdRef.current = item.id;
+                  const video = e.currentTarget;
+                  const resumeAt = item.resume_seconds ?? 0;
+                  if (resumeAt > 0 && resumeAt < video.duration) {
+                    video.currentTime = resumeAt;
+                  }
+                }}
+                onPause={() => sendHeartbeatRef.current()}
+                onEnded={() => sendHeartbeatRef.current()}
                 style={{ width: "100%", borderRadius: 8, maxHeight: 400, background: "#000" }}
               />
               <p style={{ marginTop: 12, fontSize: 13, color: "var(--text-muted)" }}>
                 Watch at least 90% of the video to continue.
+                {!!item.resume_seconds && item.resume_seconds > 0 && (
+                  <> Resuming from {Math.floor(item.resume_seconds / 60)}:{String(item.resume_seconds % 60).padStart(2, "0")}.</>
+                )}
               </p>
             </div>
           )}
 
           {item.type === "pdf" && item.url && (
             <div>
+              <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+                <button className="btn-secondary" onClick={() => setPdfMaximized(true)} style={{ fontSize: 12, padding: "4px 10px" }}>
+                  ⛶ Maximize
+                </button>
+              </div>
               <iframe
                 src={item.url}
                 style={{ width: "100%", height: 500, border: "none", borderRadius: 8 }}
@@ -460,6 +617,38 @@ export default function SectionPlayer() {
               />
               <div style={{ marginTop: 16, display: "flex", alignItems: "center", gap: 12 }}>
                 <span style={{ fontSize: 13, color: "var(--text-muted)" }}>
+                  Time spent: {pdfDwell}s {pdfDwell < 20 && `(need ${20 - pdfDwell}s more)`}
+                </span>
+                <button
+                  className="btn-primary"
+                  disabled={pdfDwell < 20 || pdfSubmitted || contentDone || loading}
+                  onClick={handleMarkPdfRead}
+                >
+                  {loading ? "Marking…" : (pdfSubmitted || contentDone) ? "Marked as Read" : "Mark as Read"}
+                </button>
+              </div>
+              {error && <p style={{ color: "var(--danger)", fontSize: 12, marginTop: 8 }}>{error}</p>}
+            </div>
+          )}
+
+          {item.type === "pdf" && item.url && pdfMaximized && (
+            <div style={{
+              position: "fixed", inset: 0, background: "rgba(0, 0, 0, 0.85)", zIndex: 2000,
+              display: "flex", flexDirection: "column", padding: 16,
+            }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                <span style={{ color: "#fff", fontSize: 14, fontWeight: 600 }}>{section.title}</span>
+                <button className="btn-secondary" onClick={() => setPdfMaximized(false)} style={{ fontSize: 12, padding: "6px 14px" }}>
+                  ✕ Close (Esc)
+                </button>
+              </div>
+              <iframe
+                src={item.url}
+                style={{ flex: 1, width: "100%", border: "none", borderRadius: 8, background: "#fff" }}
+                title="PDF Viewer (Maximized)"
+              />
+              <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 12 }}>
+                <span style={{ fontSize: 13, color: "#ddd" }}>
                   Time spent: {pdfDwell}s {pdfDwell < 20 && `(need ${20 - pdfDwell}s more)`}
                 </span>
                 <button

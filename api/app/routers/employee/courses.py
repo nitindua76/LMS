@@ -13,6 +13,7 @@ from app.models.enrollment import Enrollment, EnrollmentStatus, SectionProgress
 from app.schemas.enrollment import CourseState
 from app.schemas.section import SectionRead
 from app.services.enrollment import build_my_courses
+from app.services import content_progress
 from app.standards import bridge, xapi as xapi_svc
 
 router = APIRouter(prefix="/my", tags=["employee"])
@@ -70,11 +71,14 @@ def course_detail(
 
     # Compute section lock status if enrolled
     progress_map: dict = {}
+    content_progress_map: dict = {}
     if enrollment:
         for sp in db.query(SectionProgress).filter(
             SectionProgress.enrollment_id == enrollment.id
         ).all():
             progress_map[sp.section_id] = sp
+        all_item_ids = [ci.id for s in course.sections for ci in s.content_items]
+        content_progress_map = content_progress.get_progress_map(db, enrollment.id, all_item_ids)
 
     sections_data = []
     for s in sorted(course.sections, key=lambda x: x.order_index):
@@ -89,7 +93,11 @@ def course_detail(
                 "order_index": ci.order_index,
                 "type": ci.type.value,
                 "title": ci.url,   # display label, never the storage key
+                "video_duration_sec": ci.video_duration_sec,
             }
+            if ci.type == ContentType.video:
+                cp = content_progress_map.get(ci.id)
+                item_data["resume_seconds"] = cp.max_watched_seconds if cp else 0
             if not locked and ci.type == ContentType.scorm:
                 # Generate SCORM launch URL on-the-fly
                 try:
@@ -156,6 +164,15 @@ def course_detail(
                                 vals.append(1.0)
                         if vals:
                             scorm_pct = round(sum(vals) / len(vals) * 100, 1)
+        elif any(ci.id in content_progress_map for ci in s.content_items):
+            # No SectionProgress row yet doesn't mean untouched — a partially-watched
+            # video already has a ContentProgress row before the section is ever
+            # marked content_done, so has_started/percentage need to read from there too.
+            has_started = True
+            if not (sp and sp.completed_at):
+                native_pct = content_progress.compute_section_native_pct(s, content_progress_map)
+                if native_pct is not None:
+                    scorm_pct = native_pct
 
         # If section is fully complete, show 100%
         if sp and sp.completed_at:

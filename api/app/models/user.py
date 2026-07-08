@@ -25,6 +25,9 @@ class User(Base):
     level_id: Mapped[Optional[int]] = mapped_column(
         Integer, ForeignKey("levels.id", ondelete="RESTRICT"), nullable=True
     )
+    controller_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     role: Mapped[UserRole] = mapped_column(
         SAEnum(UserRole, name="userrole"), nullable=False, default=UserRole.employee
     )
@@ -41,3 +44,9 @@ class User(Base):
     level: Mapped[Optional["Level"]] = relationship("Level", back_populates="users")  # type: ignore[name-defined]
     enrollments: Mapped[list["Enrollment"]] = relationship("Enrollment", back_populates="user")  # type: ignore[name-defined]
     audit_logs: Mapped[list["AuditLog"]] = relationship("AuditLog", back_populates="actor", foreign_keys="AuditLog.actor_id")  # type: ignore[name-defined]
+    controller: Mapped[Optional["User"]] = relationship(
+        "User", remote_side=[id], back_populates="subordinates", foreign_keys=[controller_id]
+    )
+    subordinates: Mapped[list["User"]] = relationship(
+        "User", back_populates="controller", foreign_keys=[controller_id]
+    )

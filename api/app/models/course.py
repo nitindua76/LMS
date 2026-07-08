@@ -55,10 +55,27 @@ class Course(Base):
     targets: Mapped[list["CourseTarget"]] = relationship(
         "CourseTarget", back_populates="course", cascade="all, delete-orphan"
     )
+    # cascade="all, delete-orphan" (not passive_deletes) — content_items.section_id
+    # and quizzes.section_id are ON DELETE RESTRICT at the DB level *by design*
+    # (Section.content_items / Section.quiz already rely on this same
+    # delete-orphan cascade to explicitly delete them in Python, not on DB
+    # cascade). passive_deletes=True here would skip loading Section objects
+    # entirely and jump straight to `DELETE FROM courses`, which the DB can't
+    # turn into a cascade past sections since content_items/quizzes restrict —
+    # exactly the FK violation this comment used to invite.
     sections: Mapped[list["Section"]] = relationship(
-        "Section", back_populates="course", order_by="Section.order_index"
+        "Section", back_populates="course", order_by="Section.order_index",
+        cascade="all, delete-orphan",
     )
-    enrollments: Mapped[list["Enrollment"]] = relationship("Enrollment", back_populates="course")  # type: ignore[name-defined]
+    # enrollments.course_id is ON DELETE RESTRICT with no ORM-side cascade
+    # (a course purge deletes enrollments explicitly, in the right order,
+    # before ever deleting the course) — passive_deletes=True here is correct:
+    # it stops SQLAlchemy from trying to NULL enrollment.course_id (NOT NULL)
+    # and lets the DB's RESTRICT fire cleanly if this is ever hit with
+    # enrollments still attached.
+    enrollments: Mapped[list["Enrollment"]] = relationship(
+        "Enrollment", back_populates="course", passive_deletes=True
+    )  # type: ignore[name-defined]
 
 
 class CourseTarget(Base):
@@ -104,7 +121,15 @@ class Section(Base):
     quiz: Mapped[Optional["Quiz"]] = relationship(
         "Quiz", back_populates="section", uselist=False, cascade="all, delete-orphan"
     )
-    section_progress: Mapped[list["SectionProgress"]] = relationship("SectionProgress", back_populates="section")  # type: ignore[name-defined]
+    # No cascade here on purpose — a section with real progress history must
+    # never be silently deleted along with it. passive_deletes=True tells
+    # SQLAlchemy not to pre-emptively NULL section_id on these rows before
+    # the delete (section_id is NOT NULL, so that UPDATE would itself crash);
+    # instead it lets the DB's ON DELETE RESTRICT fire, which the section
+    # delete endpoint already catches and turns into a clean 409.
+    section_progress: Mapped[list["SectionProgress"]] = relationship(
+        "SectionProgress", back_populates="section", passive_deletes=True
+    )  # type: ignore[name-defined]
 
 
 class ContentItem(Base):

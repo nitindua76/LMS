@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     STORAGE_BACKEND: str = "minio"
     STORAGE_LOCAL_PATH: str = "/data/storage"
 
+    # Content upload caps, enforced server-side while streaming (not just Content-Length)
+    MAX_VIDEO_UPLOAD_MB: int = 500
+    MAX_PDF_UPLOAD_MB: int = 25
+
     # MinIO / Object Storage (used when STORAGE_BACKEND=minio)
     MINIO_ENDPOINT: str = "minio:9000"
     MINIO_ACCESS_KEY: str = "lmsadmin"

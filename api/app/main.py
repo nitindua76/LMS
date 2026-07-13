@@ -19,6 +19,9 @@ from app.routers.employee.quiz import router as quiz_engine_router
 from app.routers.employee.cmi5 import router as cmi5_router
 from app.routers.admin.packages import router as packages_router
 from app.routers.admin.analytics import router as analytics_router
+from app.routers.admin.sessions import router as admin_sessions_router
+from app.routers.employee.sessions import router as employee_sessions_router
+from app.routers.webhooks.livekit import router as livekit_webhook_router
 
 app = FastAPI(
     title="LMS API",
@@ -112,6 +115,25 @@ app.include_router(quiz_engine_router)
 app.include_router(cmi5_router)
 app.include_router(packages_router)
 app.include_router(analytics_router)
+app.include_router(admin_sessions_router)
+app.include_router(employee_sessions_router)
+app.include_router(livekit_webhook_router)
+
+
+@app.on_event("startup")
+def _start_background_jobs():
+    from app.services.session_scheduler import start_scheduler as start_session_scheduler
+    from app.services.enrollment_scheduler import start_scheduler as start_enrollment_scheduler
+    start_session_scheduler()
+    start_enrollment_scheduler()
+
+
+@app.on_event("shutdown")
+def _stop_background_jobs():
+    from app.services.session_scheduler import shutdown_scheduler as stop_session_scheduler
+    from app.services.enrollment_scheduler import shutdown_scheduler as stop_enrollment_scheduler
+    stop_session_scheduler()
+    stop_enrollment_scheduler()
 
 
 @app.exception_handler(Exception)

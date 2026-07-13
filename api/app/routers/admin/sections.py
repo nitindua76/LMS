@@ -1,6 +1,6 @@
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.exc import IntegrityError
 
@@ -277,6 +277,7 @@ def upload_content_file(
     section_id: int,
     item_id: int,
     file: UploadFile = File(...),
+    video_duration_sec: float | None = Form(None),
     db: Session = Depends(get_db),
     actor: User = Depends(require_admin),
 ):
@@ -291,6 +292,14 @@ def upload_content_file(
     type — a mislabeled or malicious file is rejected before it ever reaches
     storage. SCORM/cmi5 packages are not accepted here; they have their own
     manifest-validated upload endpoint.
+
+    `video_duration_sec`, when provided, is the real duration the browser read
+    from the file being uploaded — it always overwrites whatever was previously
+    stored, because the completion threshold (content.py) is computed against
+    this field. Without refreshing it on every (re)upload, replacing a video
+    with one of a different length leaves the old duration in place and the
+    section can end up impossible to complete (watched-in-full still short of
+    90% of a stale, longer duration) or trivially easy (stale shorter duration).
     """
     _get_section(db, course_id, section_id)
     item = db.query(ContentItem).filter(
@@ -323,6 +332,8 @@ def upload_content_file(
         spooled.close()
 
     item.storage_key = storage_key
+    if item.type == ContentType.video and video_duration_sec and video_duration_sec > 0:
+        item.video_duration_sec = round(video_duration_sec)
     db.flush()
     audit(
         db, actor_id=actor.id, action="upload_content_file",

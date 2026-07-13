@@ -17,6 +17,26 @@ class CourseTargetCreate(BaseModel):
     level_id: int
 
 
+class CourseTargetUserRead(BaseModel):
+    model_config = {"from_attributes": True}
+
+    id: int
+    user_id: int
+    name: str
+    email: str
+
+
+class CourseTargetUserCreate(BaseModel):
+    user_id: int
+
+
+class CsvImportRowResult(BaseModel):
+    row: int
+    email: str
+    status: str  # "added" | "error"
+    error: Optional[str] = None
+
+
 class CourseCreate(BaseModel):
     title: str
     description: Optional[str] = None

@@ -1,0 +1,54 @@
+# Dev/local LiveKit config. Single node here, but redis-backed so the exact
+# same config scales to multiple `livekit` replicas behind a load balancer
+# for production seminar-scale traffic — no application-level change needed.
+port: 7880
+rtc:
+  tcp_port: 7881
+  # Narrow range picked to dodge this host's Windows-reserved UDP exclusions
+  # (`netsh interface ipv4 show excludedportrange protocol=udp`) — Docker
+  # Desktop on Windows fails to publish a port that falls inside one of
+  # those reserved blocks. If this ever collides again after a reboot
+  # (Windows periodically re-randomizes some of these ranges), re-run that
+  # command and pick a fresh gap.
+  port_range_start: 55000
+  port_range_end: 55100
+  # In dev, the browser and the container are reachable at the same host;
+  # in production set this to the public IP/hostname of the node (or rely
+  # on STUN, which is on by default) so remote participants behind NAT can
+  # negotiate media correctly.
+  use_external_ip: false
+  # Without this, livekit-server auto-detects its own container-internal
+  # Docker bridge IP (e.g. 172.x.x.x) and advertises that as the ICE
+  # candidate address — signaling (the WS join) still succeeds, so the room
+  # UI renders, but media negotiation silently hangs on "Connecting" and
+  # times out, because the browser can never reach that internal IP even
+  # though the UDP ports are published to the host. 127.0.0.1 works because
+  # Docker Desktop forwards those published ports straight to host loopback
+  # and, in this dev setup, the browser runs on that same host. Testing from
+  # a second device on the LAN instead requires this to be the host's real
+  # LAN IP; a real deployment needs the node's public IP/hostname instead
+  # (see the docker-compose.yml comments on the livekit service).
+  node_ip: 127.0.0.1
+redis:
+  address: redis:6379
+keys:
+  # Overridden by LIVEKIT_KEYS env var in docker-compose for real deployments —
+  # never ship the dev secret below outside a local machine.
+  devkey: dev-livekit-secret-replace-in-production
+# Without this, LiveKit never calls app/routers/webhooks/livekit.py at all —
+# attendance rows (LiveSessionParticipant) and automatic session status
+# transitions silently never happen, even though the endpoint exists and
+# works fine once actually invoked. api:8000 is the api container's own
+# service name on the compose network.
+webhook:
+  api_key: devkey
+  urls:
+    - http://api:8000/webhooks/livekit
+# TURN is embedded and shares port 443/TLS so sessions still connect from
+# behind corporate/hotel firewalls that block arbitrary UDP. Requires a real
+# TLS cert + domain in production (see docker-compose.yml comments) — disabled
+# by default here since local dev has neither.
+turn:
+  enabled: false
+  tls_port: 5349
+  udp_port: 3478

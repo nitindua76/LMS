@@ -14,11 +14,35 @@ export interface CourseState {
 export interface ContentItem {
   id: number;
   order_index: number;
-  type: "video" | "pdf" | "scorm" | "cmi5";
+  type: "video" | "pdf" | "scorm" | "cmi5" | "meeting";
   title?: string;
   url?: string;
   video_duration_sec?: number | null;
   resume_seconds?: number;
+}
+
+export interface SessionEligibility {
+  eligible: boolean;
+  reason: string | null;
+  seconds_until_join_opens: number | null;
+  session: {
+    id: number;
+    mode: "meeting" | "webinar";
+    status: "scheduled" | "live" | "ended" | "cancelled";
+    start_at: string;
+    end_at: string;
+    timezone: string;
+    join_before_start_min: number;
+    waiting_room_enabled: boolean;
+  } | null;
+}
+
+export interface SessionJoinResponse {
+  livekit_url: string;
+  token: string;
+  room_name: string;
+  identity: string;
+  role: "host" | "attendee";
 }
 
 export interface SectionDetail {
@@ -200,5 +224,21 @@ export const employeeApi = {
       .post<{ ok: boolean }>(`/my/enrollments/${enrollmentId}/packages/${packageId}/sco/reset`, {
         sco_identifier: scoIdentifier,
       })
+      .then((r) => r.data),
+
+  // Live session (meeting content items)
+  sessionEligibility: (enrollmentId: number, sectionId: number, itemId: number) =>
+    client
+      .get<SessionEligibility>(`/my/enrollments/${enrollmentId}/sections/${sectionId}/content/${itemId}/session`)
+      .then((r) => r.data),
+
+  joinSession: (enrollmentId: number, sectionId: number, itemId: number) =>
+    client
+      .post<SessionJoinResponse>(`/my/enrollments/${enrollmentId}/sections/${sectionId}/content/${itemId}/session/join`, {})
+      .then((r) => r.data),
+
+  leaveSession: (enrollmentId: number, sectionId: number, itemId: number) =>
+    client
+      .post(`/my/enrollments/${enrollmentId}/sections/${sectionId}/content/${itemId}/session/leave`, {})
       .then((r) => r.data),
 };

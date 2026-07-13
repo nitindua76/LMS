@@ -12,6 +12,7 @@ from app.schemas.quiz import (
     QuizCreate, QuizUpdate, QuizReadAdmin,
     QuestionCreateAdmin, QuestionUpdateAdmin, QuestionReadAdmin,
     OptionCreateAdmin, OptionUpdateAdmin, OptionReadAdmin,
+    validate_question_options,
 )
 from app.services.audit import audit
 
@@ -177,11 +178,37 @@ def update_question(
     ).first()
     if not question:
         raise HTTPException(status_code=404, detail="Question not found")
-    for field, value in body.model_dump(exclude_none=True).items():
+
+    fields = body.model_dump(exclude_none=True, exclude={"options"})
+    new_options = body.options  # kept separate: [] is falsy but a valid "replace with empty" isn't meaningful here
+
+    effective_type = body.type if body.type is not None else question.type
+    if new_options is not None:
+        try:
+            validate_question_options(effective_type, new_options)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+
+    for field, value in fields.items():
         setattr(question, field, value)
+
+    if new_options is not None:
+        # Full replace rather than diff/upsert — matches how the create
+        # endpoint builds options from scratch, and keeps this simple: an
+        # edit from the admin UI always resubmits the complete option set.
+        db.query(Option).filter(Option.question_id == question.id).delete()
+        db.flush()
+        for i, opt_data in enumerate(new_options):
+            db.add(Option(
+                question_id=question.id,
+                order_index=opt_data.order_index if opt_data.order_index else i + 1,
+                text=opt_data.text,
+                is_correct=opt_data.is_correct,
+            ))
+
     db.flush()
     audit(db, actor_id=actor.id, action="update_question", target_type="question",
-          target_id=question_id)
+          target_id=question_id, detail={"options_replaced": new_options is not None})
     db.commit()
     return (
         db.query(Question)

@@ -241,9 +241,12 @@ export default function CourseDrilldown({ courseId, onClose }: CourseDrilldownPr
           padding: "16px 24px",
           borderTop: "1px solid var(--border)",
           display: "flex",
-          justifyContent: "flex-end",
+          justifyContent: "space-between",
           background: "var(--bg-elevated)"
         }}>
+          <a href={`/api/admin/analytics/courses/${courseId}/export`} download>
+            <button className="btn-primary">⬇ Download Excel Report</button>
+          </a>
           <button className="btn-secondary" onClick={onClose}>Close Detail View</button>
         </div>
       </div>

@@ -7,6 +7,8 @@ import {
   Section, ContentItem, Quiz, Question,
 } from "../../api/admin";
 import { getErrorMessage } from "../../api/client";
+import MeetingSessionPanel from "../../components/MeetingSessionPanel";
+import IndividualEmployeeTargets from "../../components/admin/IndividualEmployeeTargets";
 
 const STATUS_BADGE: Record<string, string> = {
   draft: "badge-yellow", published: "badge-green", archived: "badge-gray",
@@ -529,6 +531,8 @@ export default function CourseDetail() {
       </div>
       )}
 
+      {tab === "publish" && <IndividualEmployeeTargets courseId={courseId} />}
+
       {/* Sections */}
       {tab === "content" && (
       <div className="card">
@@ -577,7 +581,7 @@ function SectionRow({ section, courseId, onError }: { section: Section; courseId
   const addContentMut = useMutation({
     mutationFn: () => contentApi.create(courseId, section.id, {
       order_index: (section.content_items.length ?? 0) + 1,
-      type: newContent.type as "video" | "pdf",
+      type: newContent.type as "video" | "pdf" | "meeting",
       url: newContent.url,
       video_duration_sec: newContent.video_duration_sec ? Number(newContent.video_duration_sec) : undefined,
     }),
@@ -600,11 +604,32 @@ function SectionRow({ section, courseId, onError }: { section: Section; courseId
   });
 
   const uploadFileMut = useMutation({
-    mutationFn: ({ itemId, file }: { itemId: number; file: File }) =>
-      contentApi.uploadFile(courseId, section.id, itemId, file),
+    mutationFn: ({ itemId, file, videoDurationSec }: { itemId: number; file: File; videoDurationSec?: number }) =>
+      contentApi.uploadFile(courseId, section.id, itemId, file, videoDurationSec),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["sections", courseId] }),
     onError: (e) => onError(getErrorMessage(e)),
   });
+
+  // Reads the real duration of a video file from the browser (loadedmetadata)
+  // instead of trusting a manually-typed "Duration (sec)" field that can go
+  // stale the moment the file is replaced — see upload_content_file docstring.
+  const probeVideoDuration = (file: File): Promise<number | undefined> => {
+    return new Promise((resolve) => {
+      const url = URL.createObjectURL(file);
+      const video = document.createElement("video");
+      const cleanup = () => URL.revokeObjectURL(url);
+      video.preload = "metadata";
+      video.onloadedmetadata = () => {
+        cleanup();
+        resolve(Number.isFinite(video.duration) ? video.duration : undefined);
+      };
+      video.onerror = () => {
+        cleanup();
+        resolve(undefined);
+      };
+      video.src = url;
+    });
+  };
 
   return (
     <div style={{ border: "1px solid var(--border)", borderRadius: 4, marginBottom: 8 }}>
@@ -642,6 +667,7 @@ function SectionRow({ section, courseId, onError }: { section: Section; courseId
                   ci.type === "video" ? "badge-blue" :
                   ci.type === "pdf" ? "badge-gray" :
                   ci.type === "scorm" ? "badge-green" :
+                  ci.type === "meeting" ? "badge-red" :
                   "badge-yellow" // cmi5
                 }`}>{ci.type}</span>
                 <span style={{ flex: 1, fontSize: 12, color: "var(--text-muted)", wordBreak: "break-all" }}>{ci.url}</span>
@@ -661,9 +687,11 @@ function SectionRow({ section, courseId, onError }: { section: Section; courseId
                         accept={ci.type === "video" ? "video/*" : "application/pdf"}
                         style={{ display: "none" }}
                         disabled={uploadFileMut.isPending}
-                        onChange={(e) => {
+                        onChange={async (e) => {
                           const file = e.target.files?.[0];
-                          if (file) uploadFileMut.mutate({ itemId: ci.id, file });
+                          if (!file) return;
+                          const videoDurationSec = ci.type === "video" ? await probeVideoDuration(file) : undefined;
+                          uploadFileMut.mutate({ itemId: ci.id, file, videoDurationSec });
                         }}
                       />
                     </label>
@@ -671,32 +699,42 @@ function SectionRow({ section, courseId, onError }: { section: Section; courseId
                 )}
 
                 {/* SCORM/cmi5 package zip upload */}
-                <label className="btn-ghost" style={{ padding: "2px 8px", fontSize: 11, cursor: "pointer", display: "inline-flex", alignItems: "center", margin: 0 }}>
-                  {uploadPackageMut.isPending && uploadPackageMut.variables?.itemId === ci.id ? "Uploading..." : "Upload ZIP"}
-                  <input
-                    type="file"
-                    accept=".zip"
-                    style={{ display: "none" }}
-                    disabled={uploadPackageMut.isPending}
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file) {
-                        uploadPackageMut.mutate({ itemId: ci.id, file });
-                      }
-                    }}
-                  />
-                </label>
+                {ci.type !== "meeting" && (
+                  <label className="btn-ghost" style={{ padding: "2px 8px", fontSize: 11, cursor: "pointer", display: "inline-flex", alignItems: "center", margin: 0 }}>
+                    {uploadPackageMut.isPending && uploadPackageMut.variables?.itemId === ci.id ? "Uploading..." : "Upload ZIP"}
+                    <input
+                      type="file"
+                      accept=".zip"
+                      style={{ display: "none" }}
+                      disabled={uploadPackageMut.isPending}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          uploadPackageMut.mutate({ itemId: ci.id, file });
+                        }
+                      }}
+                    />
+                  </label>
+                )}
 
                 <button onClick={() => deleteContentMut.mutate(ci.id)} style={{ background: "none", color: "var(--danger)", fontSize: 12, padding: "2px 4px" }}>✕</button>
               </div>
+            ))}
+            {section.content_items.filter((ci) => ci.type === "meeting").map((ci) => (
+              <MeetingSessionPanel key={`session-${ci.id}`} courseId={courseId} sectionId={section.id} itemId={ci.id} />
             ))}
             <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
               <select value={newContent.type} onChange={(e) => setNewContent(c => ({ ...c, type: e.target.value }))} style={{ width: 90 }}>
                 <option value="video">Video</option>
                 <option value="pdf">PDF</option>
+                <option value="meeting">Live Session</option>
               </select>
               <input
-                placeholder={newContent.type === "video" ? "YouTube/video URL, or a title if uploading a file" : "PDF URL, or a title if uploading a file"}
+                placeholder={
+                  newContent.type === "video" ? "YouTube/video URL, or a title if uploading a file" :
+                  newContent.type === "meeting" ? "Session title (e.g. \"Q3 Town Hall\")" :
+                  "PDF URL, or a title if uploading a file"
+                }
                 value={newContent.url}
                 onChange={(e) => setNewContent(c => ({ ...c, url: e.target.value }))}
                 style={{ flex: 1 }}
@@ -720,10 +758,16 @@ function SectionRow({ section, courseId, onError }: { section: Section; courseId
   );
 }
 
+const emptyQForm = () => ({
+  type: "mcq_single", text: "", marks: 1, timer_sec: 60,
+  options: [{ text: "", is_correct: false }, { text: "", is_correct: false }],
+});
+
 function QuizSection({ courseId, sectionId, onError }: { courseId: number; sectionId: number; onError: (e: string) => void }) {
   const qc = useQueryClient();
   const [addQuestion, setAddQuestion] = useState(false);
-  const [qForm, setQForm] = useState({ type: "mcq_single", text: "", marks: 1, timer_sec: 60, options: [{ text: "", is_correct: false }, { text: "", is_correct: false }] });
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [qForm, setQForm] = useState(emptyQForm());
 
   const { data: quiz, isLoading } = useQuery({
     queryKey: ["quiz", courseId, sectionId],
@@ -747,7 +791,11 @@ function QuizSection({ courseId, sectionId, onError }: { courseId: number; secti
       order_index: (quiz?.questions.length ?? 0) + 1,
       options: qForm.options.map((o, i) => ({ order_index: i + 1, text: o.text, is_correct: o.is_correct })),
     }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["quiz", courseId, sectionId] }); setAddQuestion(false); },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["quiz", courseId, sectionId] });
+      setAddQuestion(false);
+      setQForm(emptyQForm());
+    },
     onError: (e) => onError(getErrorMessage(e)),
   });
   const deleteQuestionMut = useMutation({
@@ -755,6 +803,36 @@ function QuizSection({ courseId, sectionId, onError }: { courseId: number; secti
     onSuccess: () => qc.invalidateQueries({ queryKey: ["quiz", courseId, sectionId] }),
     onError: (e) => onError(getErrorMessage(e)),
   });
+  const updateQuestionMut = useMutation({
+    mutationFn: () => quizzesApi.updateQuestion(courseId, sectionId, editingId!, {
+      type: qForm.type as Question["type"],
+      text: qForm.text,
+      marks: qForm.marks,
+      timer_sec: qForm.timer_sec,
+      options: qForm.options.map((o, i) => ({ order_index: i + 1, text: o.text, is_correct: o.is_correct })),
+    }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["quiz", courseId, sectionId] });
+      setEditingId(null);
+      setQForm(emptyQForm());
+    },
+    onError: (e) => onError(getErrorMessage(e)),
+  });
+
+  const startEdit = (q: Question) => {
+    setQForm({
+      type: q.type, text: q.text, marks: q.marks, timer_sec: q.timer_sec,
+      options: q.options.map((o) => ({ text: o.text, is_correct: o.is_correct })),
+    });
+    setAddQuestion(false);
+    setEditingId(q.id);
+  };
+
+  const cancelForm = () => {
+    setAddQuestion(false);
+    setEditingId(null);
+    setQForm(emptyQForm());
+  };
 
   if (isLoading) return <div className="spinner" style={{ width: 16, height: 16 }} />;
 
@@ -777,7 +855,10 @@ function QuizSection({ courseId, sectionId, onError }: { courseId: number; secti
         <div key={q.id} style={{ background: "var(--bg-elevated)", borderRadius: 4, padding: "8px 12px", marginBottom: 6 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
             <div style={{ fontSize: 13 }}><span className="badge badge-gray">{q.type}</span> {q.text}</div>
-            <button onClick={() => deleteQuestionMut.mutate(q.id)} style={{ background: "none", color: "var(--danger)", fontSize: 12, padding: 2 }}>✕</button>
+            <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+              <button onClick={() => startEdit(q)} className="btn-ghost" style={{ fontSize: 11, padding: "2px 8px" }}>Edit</button>
+              <button onClick={() => deleteQuestionMut.mutate(q.id)} style={{ background: "none", color: "var(--danger)", fontSize: 12, padding: 2 }}>✕</button>
+            </div>
           </div>
           <div style={{ marginTop: 6 }}>
             {q.options.map((o) => (
@@ -786,15 +867,37 @@ function QuizSection({ courseId, sectionId, onError }: { courseId: number; secti
               </div>
             ))}
           </div>
-          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>{q.marks}pt · {q.timer_sec}s</div>
+          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
+            {q.marks}pt · {q.timer_sec === 0 ? "no time limit" : `${q.timer_sec}s`}
+          </div>
         </div>
       ))}
 
-      {addQuestion ? (
+      {(addQuestion || editingId !== null) ? (
         <div style={{ background: "var(--bg-elevated)", borderRadius: 4, padding: 12, marginTop: 8 }}>
+          {editingId !== null && (
+            <div style={{ fontSize: 11, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
+              Editing question
+            </div>
+          )}
           <div className="form-group">
             <label>Type</label>
-            <select value={qForm.type} onChange={(e) => setQForm(f => ({ ...f, type: e.target.value }))}>
+            <select value={qForm.type} onChange={(e) => {
+              const newType = e.target.value;
+              setQForm(f => {
+                // Options don't carry over across a true_false boundary in
+                // either direction — a fixed True/False pair doesn't fit as
+                // MCQ options and vice versa. Between mcq_single/mcq_multi,
+                // whatever options were already typed are kept as-is.
+                if (newType === "true_false") {
+                  return { ...f, type: newType, options: [{ text: "True", is_correct: false }, { text: "False", is_correct: false }] };
+                }
+                if (f.type === "true_false") {
+                  return { ...f, type: newType, options: [{ text: "", is_correct: false }, { text: "", is_correct: false }] };
+                }
+                return { ...f, type: newType };
+              });
+            }}>
               <option value="mcq_single">MCQ (single answer)</option>
               <option value="mcq_multi">MCQ (multi answer)</option>
               <option value="true_false">True / False</option>
@@ -804,18 +907,35 @@ function QuizSection({ courseId, sectionId, onError }: { courseId: number; secti
             <label>Question Text</label>
             <textarea rows={2} value={qForm.text} onChange={(e) => setQForm(f => ({ ...f, text: e.target.value }))} style={{ resize: "vertical" }} />
           </div>
-          <div style={{ display: "flex", gap: 8 }} className="form-group">
+          <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }} className="form-group">
             <div style={{ flex: 1 }}><label>Marks</label><input type="number" min={1} value={qForm.marks} onChange={(e) => setQForm(f => ({ ...f, marks: Number(e.target.value) }))} /></div>
-            <div style={{ flex: 1 }}><label>Timer (sec)</label><input type="number" min={5} value={qForm.timer_sec} onChange={(e) => setQForm(f => ({ ...f, timer_sec: Number(e.target.value) }))} /></div>
+            <div style={{ flex: 1 }}>
+              <label>Timer (sec)</label>
+              <input type="number" min={5} value={qForm.timer_sec === 0 ? "" : qForm.timer_sec}
+                disabled={qForm.timer_sec === 0}
+                placeholder={qForm.timer_sec === 0 ? "No limit" : undefined}
+                onChange={(e) => setQForm(f => ({ ...f, timer_sec: Number(e.target.value) }))} />
+            </div>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: "normal", textTransform: "none", marginBottom: 10, whiteSpace: "nowrap" }}>
+              <input type="checkbox" style={{ width: "auto" }} checked={qForm.timer_sec === 0}
+                onChange={(e) => setQForm(f => ({ ...f, timer_sec: e.target.checked ? 0 : 60 }))} />
+              No time limit
+            </label>
           </div>
           <div className="form-group">
             <label>Options (mark correct ones)</label>
             {qForm.options.map((opt, i) => (
               <div key={i} style={{ display: "flex", gap: 6, marginBottom: 4, alignItems: "center" }}>
                 <input type="checkbox" checked={opt.is_correct}
-                  onChange={(e) => setQForm(f => ({ ...f, options: f.options.map((o, j) => j === i ? { ...o, is_correct: e.target.checked } : (qForm.type === "mcq_single" ? { ...o, is_correct: false } : o)) }))}
+                  onChange={(e) => setQForm(f => ({
+                    ...f,
+                    options: f.options.map((o, j) => j === i
+                      ? { ...o, is_correct: e.target.checked }
+                      : ((f.type === "mcq_single" || f.type === "true_false") ? { ...o, is_correct: false } : o)),
+                  }))}
                   style={{ width: "auto", flex: "none" }} />
-                <input value={opt.text} onChange={(e) => setQForm(f => ({ ...f, options: f.options.map((o, j) => j === i ? { ...o, text: e.target.value } : o) }))} placeholder={`Option ${i + 1}`} />
+                <input value={opt.text} disabled={qForm.type === "true_false"}
+                  onChange={(e) => setQForm(f => ({ ...f, options: f.options.map((o, j) => j === i ? { ...o, text: e.target.value } : o) }))} placeholder={`Option ${i + 1}`} />
                 {qForm.type !== "true_false" && qForm.options.length > 2 && (
                   <button onClick={() => setQForm(f => ({ ...f, options: f.options.filter((_, j) => j !== i) }))} style={{ background: "none", color: "var(--danger)", padding: 0, flex: "none" }}>✕</button>
                 )}
@@ -829,12 +949,18 @@ function QuizSection({ courseId, sectionId, onError }: { courseId: number; secti
             )}
           </div>
           <div style={{ display: "flex", gap: 6 }}>
-            <button className="btn-primary" onClick={() => addQuestionMut.mutate()} disabled={addQuestionMut.isPending || !qForm.text.trim()}>Add Question</button>
-            <button className="btn-ghost" onClick={() => setAddQuestion(false)}>Cancel</button>
+            <button className="btn-primary"
+              onClick={() => editingId !== null ? updateQuestionMut.mutate() : addQuestionMut.mutate()}
+              disabled={(editingId !== null ? updateQuestionMut.isPending : addQuestionMut.isPending) || !qForm.text.trim()}>
+              {editingId !== null
+                ? (updateQuestionMut.isPending ? "Saving…" : "Save Changes")
+                : (addQuestionMut.isPending ? "Adding…" : "Add Question")}
+            </button>
+            <button className="btn-ghost" onClick={cancelForm}>Cancel</button>
           </div>
         </div>
       ) : (
-        <button className="btn-ghost" style={{ fontSize: 12, marginTop: 8 }} onClick={() => setAddQuestion(true)}>+ Add Question</button>
+        <button className="btn-ghost" style={{ fontSize: 12, marginTop: 8 }} onClick={() => { setQForm(emptyQForm()); setAddQuestion(true); }}>+ Add Question</button>
       )}
     </div>
   );

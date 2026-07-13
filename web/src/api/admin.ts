@@ -137,10 +137,28 @@ export const coursesApi = {
   unpublish: (id: number) => client.post<Course>(`/admin/courses/${id}/unpublish`, {}).then((r) => r.data),
 };
 
+// ── Course-level individual employee targeting ─────────────────────────────────
+export interface CourseTargetUser { id: number; user_id: number; name: string; email: string; }
+export interface CsvImportRowResult { row: number; email: string; status: "added" | "imported" | "error"; error: string | null; }
+
+export const courseTargetUsersApi = {
+  list: (courseId: number) =>
+    client.get<CourseTargetUser[]>(`/admin/courses/${courseId}/target-users`).then((r) => r.data),
+  add: (courseId: number, userId: number) =>
+    client.post<CourseTargetUser>(`/admin/courses/${courseId}/target-users`, { user_id: userId }).then((r) => r.data),
+  remove: (courseId: number, targetUserId: number) =>
+    client.delete(`/admin/courses/${courseId}/target-users/${targetUserId}`),
+  importCsv: (courseId: number, file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return client.post<CsvImportRowResult[]>(`/admin/courses/${courseId}/target-users/import`, fd).then((r) => r.data);
+  },
+};
+
 // ── Sections & Content ────────────────────────────────────────────────────────
 export interface ContentItem {
   id: number; section_id: number; order_index: number;
-  type: "video" | "pdf" | "scorm" | "cmi5"; url: string; video_duration_sec: number | null;
+  type: "video" | "pdf" | "scorm" | "cmi5" | "meeting"; url: string; video_duration_sec: number | null;
   storage_key: string | null;
 }
 
@@ -169,9 +187,10 @@ export const contentApi = {
     client.put<ContentItem>(`/admin/courses/${courseId}/sections/${sectionId}/content/${itemId}`, data).then((r) => r.data),
   delete: (courseId: number, sectionId: number, itemId: number) =>
     client.delete(`/admin/courses/${courseId}/sections/${sectionId}/content/${itemId}`),
-  uploadFile: (courseId: number, sectionId: number, itemId: number, file: File) => {
+  uploadFile: (courseId: number, sectionId: number, itemId: number, file: File, videoDurationSec?: number) => {
     const fd = new FormData();
     fd.append("file", file);
+    if (videoDurationSec) fd.append("video_duration_sec", String(videoDurationSec));
     return client
       .post<ContentItem>(`/admin/courses/${courseId}/sections/${sectionId}/content/${itemId}/upload`, fd)
       .then((r) => r.data);
@@ -199,10 +218,81 @@ export const quizzesApi = {
     client.delete(`/admin/courses/${courseId}/sections/${sectionId}/quiz`),
   createQuestion: (courseId: number, sectionId: number, data: Partial<Question & { options: Partial<Option>[] }>) =>
     client.post<Question>(`/admin/courses/${courseId}/sections/${sectionId}/quiz/questions`, data).then((r) => r.data),
-  updateQuestion: (courseId: number, sectionId: number, qId: number, data: Partial<Question>) =>
+  updateQuestion: (courseId: number, sectionId: number, qId: number, data: Partial<Question & { options: Partial<Option>[] }>) =>
     client.put<Question>(`/admin/courses/${courseId}/sections/${sectionId}/quiz/questions/${qId}`, data).then((r) => r.data),
   deleteQuestion: (courseId: number, sectionId: number, qId: number) =>
     client.delete(`/admin/courses/${courseId}/sections/${sectionId}/quiz/questions/${qId}`),
+};
+
+// ── Live sessions (meeting content items) ──────────────────────────────────────
+export interface SessionAudienceRule {
+  id: number;
+  discipline_id: number | null;
+  level_id: number | null;
+  user_id: number | null;
+}
+
+export interface LiveSession {
+  id: number;
+  content_item_id: number;
+  room_name: string;
+  mode: "meeting" | "webinar";
+  status: "scheduled" | "live" | "ended" | "cancelled";
+  start_at: string;
+  end_at: string;
+  timezone: string;
+  join_before_start_min: number;
+  host_user_id: number | null;
+  waiting_room_enabled: boolean;
+  max_participants: number | null;
+  audience_rules: SessionAudienceRule[];
+}
+
+export interface SessionParticipant {
+  id: number;
+  user_id: number;
+  role: "host" | "presenter" | "attendee";
+  joined_at: string;
+  left_at: string | null;
+  duration_sec: number;
+}
+
+export type LiveSessionInput = {
+  mode?: "meeting" | "webinar";
+  start_at: string;
+  end_at: string;
+  timezone?: string;
+  join_before_start_min?: number;
+  host_user_id?: number | null;
+  waiting_room_enabled?: boolean;
+  max_participants?: number | null;
+};
+
+const sessionPath = (courseId: number, sectionId: number, itemId: number) =>
+  `/admin/courses/${courseId}/sections/${sectionId}/content/${itemId}/session`;
+
+export const sessionsApi = {
+  get: (courseId: number, sectionId: number, itemId: number) =>
+    client.get<LiveSession>(sessionPath(courseId, sectionId, itemId)).then((r) => r.data),
+  create: (courseId: number, sectionId: number, itemId: number, data: LiveSessionInput) =>
+    client.post<LiveSession>(sessionPath(courseId, sectionId, itemId), data).then((r) => r.data),
+  update: (courseId: number, sectionId: number, itemId: number, data: Partial<LiveSessionInput>) =>
+    client.put<LiveSession>(sessionPath(courseId, sectionId, itemId), data).then((r) => r.data),
+  cancel: (courseId: number, sectionId: number, itemId: number) =>
+    client.post<LiveSession>(`${sessionPath(courseId, sectionId, itemId)}/cancel`, {}).then((r) => r.data),
+  end: (courseId: number, sectionId: number, itemId: number) =>
+    client.post<LiveSession>(`${sessionPath(courseId, sectionId, itemId)}/end`, {}).then((r) => r.data),
+  participants: (courseId: number, sectionId: number, itemId: number) =>
+    client.get<SessionParticipant[]>(`${sessionPath(courseId, sectionId, itemId)}/participants`).then((r) => r.data),
+  listAudience: (courseId: number, sectionId: number, itemId: number) =>
+    client.get<SessionAudienceRule[]>(`${sessionPath(courseId, sectionId, itemId)}/audience`).then((r) => r.data),
+  addAudience: (
+    courseId: number, sectionId: number, itemId: number,
+    data: { discipline_id?: number; level_id?: number; user_id?: number }
+  ) =>
+    client.post<SessionAudienceRule>(`${sessionPath(courseId, sectionId, itemId)}/audience`, data).then((r) => r.data),
+  removeAudience: (courseId: number, sectionId: number, itemId: number, ruleId: number) =>
+    client.delete(`${sessionPath(courseId, sectionId, itemId)}/audience/${ruleId}`),
 };
 
 export const packagesApi = {

@@ -1,0 +1,22 @@
+# Secrets — never commit real environment files
+.env
+.env.prod
+.env.local
+
+# Generated from templates at deploy time (contains real LiveKit keys)
+livekit/livekit.prod.yaml
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Node
+node_modules/
+dist/
+
+# Editors/OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

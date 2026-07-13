@@ -572,22 +572,11 @@ tr:hover td {
   overflow: hidden; /* Prevent parent wrapper from showing a duplicate scrollbar */
 }
 
-.mobile-toc-toggle {
-  display: none !important;
-}
-
 @media (max-width: 991px) {
-  .mobile-toc-toggle {
-    display: inline-flex !important;
-  }
   .player-layout {
     flex-direction: column-reverse; /* Content on top, sidebar TOC below on mobile */
   }
   .player-sidebar {
-    display: none !important; /* Hide by default on mobile */
-  }
-  .player-sidebar.open {
-    display: flex !important;
     width: 100%;
     max-height: 350px;
     margin-bottom: 16px;

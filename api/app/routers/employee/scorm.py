@@ -18,10 +18,11 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.package import LearningPackage, PackageFormat, ScormCmiData
-from app.models.enrollment import Enrollment
+from app.models.enrollment import Enrollment, EnrollmentStatus
 from app.models.course import Section, ContentItem, ContentType
 from app.dependencies import require_employee, verify_csrf
 from app.services.scorm.token import create_scorm_token, decode_scorm_token
+from app.services.enrollment import enrollment_deadline_passed
 from app.standards import bridge, xapi as xapi_svc
 from app.models.user import User
 from app.config import settings
@@ -70,7 +71,9 @@ def scorm_launch(
     ).first()
     if not enrollment:
         raise HTTPException(status_code=404, detail="Enrollment not found")
-    if enrollment.deadline_at and datetime.now(timezone.utc) > enrollment.deadline_at:
+    if enrollment_deadline_passed(enrollment):
+        enrollment.status = EnrollmentStatus.expired
+        db.commit()
         raise HTTPException(status_code=403, detail="Course deadline has passed")
 
     section = db.query(Section).filter(
@@ -229,7 +232,9 @@ def _auth(
         raise HTTPException(status_code=403, detail="Enrollment mismatch")
 
     # Check deadline
-    if enrollment.deadline_at and datetime.now(timezone.utc) > enrollment.deadline_at:
+    if enrollment_deadline_passed(enrollment):
+        enrollment.status = EnrollmentStatus.expired
+        db.commit()
         raise HTTPException(status_code=403, detail="Course deadline has passed")
 
     return user, pkg, enrollment

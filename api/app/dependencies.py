@@ -2,6 +2,8 @@ from fastapi import Cookie, Header, HTTPException, status, Request, Depends
 from sqlalchemy.orm import Session
 from typing import Optional
 
+from app.config import settings
+from app.conferencing import ConferencingClient
 from app.database import get_db
 from app.models.user import User, UserRole
 from app.services import auth as auth_svc
@@ -67,3 +69,9 @@ def verify_csrf(
 def _constant_time_compare(a: str, b: str) -> bool:
     import hmac
     return hmac.compare_digest(a, b)
+
+
+def get_conferencing_client() -> ConferencingClient:
+    return ConferencingClient(
+        settings.LIVEKIT_SERVER_URL, settings.LIVEKIT_API_KEY, settings.LIVEKIT_API_SECRET
+    )

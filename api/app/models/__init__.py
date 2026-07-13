@@ -5,6 +5,7 @@ from .user import User, UserRole
 from .course import (
     Course, CourseStatus,
     CourseTarget,
+    CourseTargetUser,
     Section,
     ContentItem, ContentType,
     Quiz,
@@ -19,6 +20,12 @@ from .enrollment import (
     AttemptAnswer,
     SentReminder,
 )
+from .live_session import (
+    LiveSession, SessionMode, SessionStatus, SessionParticipantRole,
+    SessionAudienceRule,
+    LiveSessionParticipant,
+    SentSessionReminder, SessionReminderType,
+)
 from .audit import AuditLog
 from .controller_history import ControllerAssignmentHistory, ControllerAssignmentSource
 from .package import LearningPackage, ScormCmiData, PackageFormat, SequencingMode, MoveOn
@@ -32,6 +39,7 @@ __all__ = [
     "User", "UserRole",
     "Course", "CourseStatus",
     "CourseTarget",
+    "CourseTargetUser",
     "Section",
     "ContentItem", "ContentType",
     "Quiz",
@@ -43,6 +51,10 @@ __all__ = [
     "QuizAttempt", "QuizAttemptStatus",
     "AttemptAnswer",
     "SentReminder",
+    "LiveSession", "SessionMode", "SessionStatus", "SessionParticipantRole",
+    "SessionAudienceRule",
+    "LiveSessionParticipant",
+    "SentSessionReminder", "SessionReminderType",
     "AuditLog",
     "ControllerAssignmentHistory", "ControllerAssignmentSource",
     "LearningPackage", "ScormCmiData", "PackageFormat", "SequencingMode", "MoveOn",

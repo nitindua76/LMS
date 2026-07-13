@@ -156,7 +156,13 @@ def course_detail(
                     if not (sp and sp.completed_at):
                         vals = []
                         for r in cmi_rows:
-                            if r.progress_measure is not None:
+                            if r.completion_status == "completed" and r.success_status == "failed":
+                                # Content was fully traversed but the embedded assessment
+                                # was failed — progress_measure would show 100% here, which
+                                # misrepresents a failed attempt as done. Reflect the actual
+                                # score instead so a retake shows as genuinely incomplete.
+                                vals.append(r.score_scaled if r.score_scaled is not None else 0.0)
+                            elif r.progress_measure is not None:
                                 vals.append(r.progress_measure)
                             elif r.score_scaled is not None:
                                 vals.append(r.score_scaled)

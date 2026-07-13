@@ -1,19 +1,22 @@
+import csv
+import io
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.exc import IntegrityError
 
 from app.database import get_db
 from app.dependencies import require_admin, verify_csrf
 from app.models.user import User
-from app.models.course import Course, CourseStatus, CourseTarget, Section
+from app.models.course import Course, CourseStatus, CourseTarget, CourseTargetUser, Section, ContentItem
 from app.models.discipline import Discipline
 from app.models.level import Level
 from app.schemas.common import PaginatedResponse
 from app.schemas.course import (
     CourseCreate, CourseUpdate, CourseRead, CourseSummary,
     CourseTargetCreate, CourseTargetRead,
+    CourseTargetUserCreate, CourseTargetUserRead, CsvImportRowResult,
     CoursePurgeRequest, CoursePurgeResponse,
 )
 from app.services.audit import audit
@@ -201,6 +204,28 @@ def purge_course(
 # action, gated by a real readiness check rather than the free-form status
 # dropdown that used to let an empty, untargeted course go "published".
 
+def _has_live_session_audience(db: Session, course_id: int) -> bool:
+    """
+    True if any meeting content item in this course already has its own
+    session-specific audience (SessionAudienceRule) configured. Lets a
+    course whose content is a targeted live session publish without also
+    requiring redundant course-level discipline+level targets — an admin
+    who already picked attendees on the session itself shouldn't have to
+    repeat that in Targeting & Publish.
+    """
+    from app.models.live_session import LiveSession, SessionAudienceRule
+
+    return (
+        db.query(SessionAudienceRule)
+        .join(LiveSession, LiveSession.id == SessionAudienceRule.live_session_id)
+        .join(ContentItem, ContentItem.id == LiveSession.content_item_id)
+        .join(Section, Section.id == ContentItem.section_id)
+        .filter(Section.course_id == course_id)
+        .first()
+        is not None
+    )
+
+
 def _publish_issues(db: Session, course: Course) -> List[str]:
     issues: List[str] = []
     sections = (
@@ -215,8 +240,14 @@ def _publish_issues(db: Session, course: Course) -> List[str]:
     for s in sections:
         if not s.content_items and not s.quiz:
             issues.append(f"Section \"{s.title}\" has no content and no quiz")
-    if not course.targets:
-        issues.append("Assign at least one target audience (discipline + level)")
+    has_individual_users = db.query(CourseTargetUser).filter(
+        CourseTargetUser.course_id == course.id
+    ).first() is not None
+    if not course.targets and not has_individual_users and not _has_live_session_audience(db, course.id):
+        issues.append(
+            "Assign at least one target audience (discipline + level), "
+            "add specific employees, or add specific attendees to a live session"
+        )
     return issues
 
 
@@ -326,3 +357,136 @@ def remove_target(
     audit(db, actor_id=actor.id, action="remove_course_target", target_type="course_target",
           target_id=target_id, detail={"course_id": course_id})
     db.commit()
+
+
+# ── Individually-targeted employees ──────────────────────────────────────────
+#
+# Additive on top of the discipline+level targets above — the same "add
+# specific people regardless of their department/level" shape already built
+# for live sessions (SessionAudienceRule.user_id), but at the whole-course
+# level. See services/enrollment.py::get_assigned_courses for how this
+# feeds into what shows up in an employee's My Courses.
+
+def _target_user_read(row: CourseTargetUser) -> CourseTargetUserRead:
+    return CourseTargetUserRead(id=row.id, user_id=row.user_id, name=row.user.name, email=row.user.email)
+
+
+@router.get("/{course_id}/target-users", response_model=List[CourseTargetUserRead])
+def list_target_users(
+    course_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+    _load_course(db, course_id)
+    rows = (
+        db.query(CourseTargetUser)
+        .options(joinedload(CourseTargetUser.user))
+        .filter(CourseTargetUser.course_id == course_id)
+        .all()
+    )
+    return [_target_user_read(r) for r in rows]
+
+
+@router.post("/{course_id}/target-users", response_model=CourseTargetUserRead, status_code=201,
+             dependencies=[Depends(verify_csrf)])
+def add_target_user(
+    course_id: int,
+    body: CourseTargetUserCreate,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_admin),
+):
+    _load_course(db, course_id)
+    user = db.get(User, body.user_id)
+    if not user:
+        raise HTTPException(status_code=422, detail="User not found")
+
+    row = CourseTargetUser(course_id=course_id, user_id=body.user_id)
+    db.add(row)
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="This employee is already individually targeted")
+    audit(db, actor_id=actor.id, action="add_course_target_user", target_type="course_target_user",
+          target_id=row.id, detail={"course_id": course_id, "user_id": body.user_id})
+    db.commit()
+    db.refresh(row)
+    return _target_user_read(row)
+
+
+@router.delete("/{course_id}/target-users/{target_user_id}", status_code=204,
+                dependencies=[Depends(verify_csrf)])
+def remove_target_user(
+    course_id: int,
+    target_user_id: int,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_admin),
+):
+    row = db.query(CourseTargetUser).filter(
+        CourseTargetUser.id == target_user_id,
+        CourseTargetUser.course_id == course_id,
+    ).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Not found")
+    db.delete(row)
+    audit(db, actor_id=actor.id, action="remove_course_target_user", target_type="course_target_user",
+          target_id=target_user_id, detail={"course_id": course_id})
+    db.commit()
+
+
+@router.post("/{course_id}/target-users/import", response_model=List[CsvImportRowResult],
+             dependencies=[Depends(verify_csrf)])
+async def import_target_users_csv(
+    course_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_admin),
+):
+    """
+    CSV with a single required `email` column — one row per employee to add
+    to this course's individual targeting. Same shape/behavior as the
+    existing user-import endpoint (admin/users.py): every row is processed,
+    good or bad, and reported back rather than aborting on the first error.
+    """
+    _load_course(db, course_id)
+    content = await file.read()
+    text = content.decode("utf-8-sig", errors="replace")
+    reader = csv.DictReader(io.StringIO(text))
+
+    if not reader.fieldnames or "email" not in {f.strip().lower() for f in reader.fieldnames}:
+        raise HTTPException(status_code=422, detail="CSV must have an 'email' column")
+
+    results: List[CsvImportRowResult] = []
+    added_count = 0
+    for idx, row in enumerate(reader, start=2):
+        email = (row.get("email") or row.get("Email") or "").strip().lower()
+        if not email:
+            results.append(CsvImportRowResult(row=idx, email="", status="error", error="email is required"))
+            continue
+
+        user = db.query(User).filter(User.email == email).first()
+        if not user:
+            results.append(CsvImportRowResult(row=idx, email=email, status="error", error="No user with this email"))
+            continue
+
+        existing = db.query(CourseTargetUser).filter(
+            CourseTargetUser.course_id == course_id, CourseTargetUser.user_id == user.id,
+        ).first()
+        if existing:
+            results.append(CsvImportRowResult(row=idx, email=email, status="error", error="Already targeted"))
+            continue
+
+        target_row = CourseTargetUser(course_id=course_id, user_id=user.id)
+        db.add(target_row)
+        try:
+            db.flush()
+            added_count += 1
+            results.append(CsvImportRowResult(row=idx, email=email, status="added"))
+        except IntegrityError:
+            db.rollback()
+            results.append(CsvImportRowResult(row=idx, email=email, status="error", error="Concurrent conflict"))
+
+    audit(db, actor_id=actor.id, action="csv_import_course_target_users", target_type="course",
+          target_id=course_id, detail={"added_count": added_count})
+    db.commit()
+    return results

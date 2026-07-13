@@ -106,7 +106,8 @@ export default function QuizRunner({ enrollmentId, sectionId, onComplete }: Prop
   }
 
   const pct = totalQuestions > 0 ? (questionNumber / totalQuestions) * 100 : 0;
-  const timerColor = secondsRemaining <= 5 ? "var(--danger)" : secondsRemaining <= 15 ? "var(--warning)" : "var(--success)";
+  const noTimeLimit = question.timer_sec === 0;
+  const timerColor = noTimeLimit ? "var(--text-muted)" : secondsRemaining <= 5 ? "var(--danger)" : secondsRemaining <= 15 ? "var(--warning)" : "var(--success)";
 
   return (
     <div className="card" style={{ maxWidth: 640, margin: "0 auto" }}>
@@ -119,7 +120,7 @@ export default function QuizRunner({ enrollmentId, sectionId, onComplete }: Prop
           fontSize: 14, fontWeight: 700, color: timerColor,
           background: "var(--bg-elevated)", padding: "4px 10px", borderRadius: 6,
         }}>
-          {secondsRemaining}s
+          {noTimeLimit ? "No time limit" : `${secondsRemaining}s`}
         </span>
       </div>
 

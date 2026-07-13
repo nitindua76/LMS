@@ -21,6 +21,7 @@ from app.models.enrollment import (
     AttemptAnswer, SectionProgress,
 )
 from app.standards import bridge, xapi as xapi_svc
+from app.services.enrollment import enrollment_deadline_passed
 
 router = APIRouter(prefix="/my", tags=["employee-quiz"])
 
@@ -39,7 +40,9 @@ def _get_enrollment_section_quiz(
     if not enrollment:
         raise HTTPException(status_code=404, detail="Enrollment not found")
 
-    if enrollment.deadline_at and datetime.now(timezone.utc) > enrollment.deadline_at:
+    if enrollment_deadline_passed(enrollment):
+        enrollment.status = EnrollmentStatus.expired
+        db.commit()
         raise HTTPException(status_code=403, detail="Course deadline has passed")
 
     section = db.query(Section).options(
@@ -103,6 +106,8 @@ def _serve_question(
 
 
 def _check_timed_out(aa: AttemptAnswer, question: Question) -> bool:
+    if question.timer_sec == 0:  # sentinel: no time limit
+        return False
     elapsed = (datetime.now(timezone.utc) - aa.served_at).total_seconds()
     return elapsed > (question.timer_sec + TIMER_GRACE_SECONDS)
 
@@ -277,7 +282,7 @@ def answer_question(
 
     now = datetime.now(timezone.utc)
     elapsed = (now - aa.served_at).total_seconds()
-    timed_out = elapsed > (current_q.timer_sec + TIMER_GRACE_SECONDS)
+    timed_out = _check_timed_out(aa, current_q)
 
     if timed_out:
         aa.timed_out = True
@@ -428,7 +433,7 @@ def current_question(
     ).first()
 
     elapsed = int((datetime.now(timezone.utc) - aa.served_at).total_seconds()) if aa else 0
-    remaining = max(0, q.timer_sec - elapsed)
+    remaining = 0 if q.timer_sec == 0 else max(0, q.timer_sec - elapsed)
 
     return {
         "complete": False,

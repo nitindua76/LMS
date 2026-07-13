@@ -1,6 +1,12 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { employeeApi, CourseState } from "../../api/employee";
+
+// Courses in one of these states are "done" — hidden by default so the
+// list defaults to what still needs action (not started / in progress),
+// with a toggle to bring finished/expired courses back into view.
+const FINISHED_STATES = new Set(["completed", "failed", "expired"]);
 
 const STATE_BADGE: Record<string, { cls: string; label: string }> = {
   locked: { cls: "badge-gray", label: "Locked" },
@@ -60,22 +66,38 @@ export default function MyCourses() {
     queryKey: ["my-courses"],
     queryFn: () => employeeApi.myCourses(),
   });
+  const [showAll, setShowAll] = useState(false);
 
-  const mandatory = data?.filter((c) => c.mandatory) ?? [];
-  const optional = data?.filter((c) => !c.mandatory) ?? [];
+  const visible = (data ?? []).filter((c) => showAll || !FINISHED_STATES.has(c.state));
+  const hiddenCount = (data?.length ?? 0) - visible.length;
+  const mandatory = visible.filter((c) => c.mandatory);
+  const optional = visible.filter((c) => !c.mandatory);
 
   if (isLoading) return <div className="center"><div className="spinner" /></div>;
   if (error) return <div style={{ color: "var(--danger)" }}>Failed to load courses.</div>;
 
   return (
     <div>
-      <div className="page-header">
+      <div className="page-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <h1>My Courses</h1>
+        {(hiddenCount > 0 || showAll) && (
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: "normal", textTransform: "none", cursor: "pointer" }}>
+            <input type="checkbox" style={{ width: "auto" }} checked={showAll} onChange={(e) => setShowAll(e.target.checked)} />
+            Show completed / expired courses{!showAll && hiddenCount > 0 && ` (${hiddenCount} hidden)`}
+          </label>
+        )}
       </div>
 
       {data?.length === 0 && (
         <div className="card" style={{ textAlign: "center", padding: 48, color: "var(--text-muted)" }}>
           No courses assigned to you yet.
+        </div>
+      )}
+
+      {data && data.length > 0 && visible.length === 0 && (
+        <div className="card" style={{ textAlign: "center", padding: 48, color: "var(--text-muted)" }}>
+          Nothing in progress or not-started — all {data.length} assigned course{data.length !== 1 && "s"} are completed/expired.
+          Check "Show completed / expired courses" above to see them.
         </div>
       )}
 

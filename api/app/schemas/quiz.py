@@ -51,6 +51,40 @@ class OptionReadEmployee(BaseModel):
 
 # ── Question schemas ───────────────────────────────────────────────────────────
 
+def _validate_timer_sec(v: int) -> int:
+    """0 is the sentinel for "no time limit" (avoids a nullable-column
+    migration and the ambiguity a real None would have in a PATCH body,
+    where None already means "don't change this field")."""
+    if v != 0 and v < 5:
+        raise ValueError("timer_sec must be 0 (no time limit) or >= 5")
+    return v
+
+
+def validate_question_options(question_type: QuestionType, options: list) -> None:
+    """
+    Shared by QuestionCreateAdmin's validator and the update_question router
+    (which can't validate this at the schema level alone — a PATCH may
+    change `options` without repeating `type`, so the effective type has to
+    be resolved against the existing DB row first).
+    """
+    if question_type == QuestionType.true_false:
+        if len(options) != 2:
+            raise ValueError("true_false questions must have exactly 2 options")
+    elif len(options) < 2:
+        raise ValueError("questions must have at least 2 options")
+
+    correct_count = sum(1 for o in options if o.is_correct)
+    if question_type == QuestionType.mcq_single:
+        if correct_count != 1:
+            raise ValueError("mcq_single must have exactly 1 correct option")
+    elif question_type == QuestionType.true_false:
+        if correct_count != 1:
+            raise ValueError("true_false must have exactly 1 correct option")
+    elif question_type == QuestionType.mcq_multi:
+        if correct_count < 1:
+            raise ValueError("mcq_multi must have at least 1 correct option")
+
+
 class QuestionCreateAdmin(BaseModel):
     order_index: int
     type: QuestionType
@@ -75,30 +109,12 @@ class QuestionCreateAdmin(BaseModel):
 
     @field_validator("timer_sec")
     @classmethod
-    def timer_positive(cls, v: int) -> int:
-        if v < 5:
-            raise ValueError("timer_sec must be >= 5")
-        return v
+    def timer_valid(cls, v: int) -> int:
+        return _validate_timer_sec(v)
 
     @model_validator(mode="after")
     def validate_options(self) -> "QuestionCreateAdmin":
-        options = self.options
-        if self.type == QuestionType.true_false:
-            if len(options) != 2:
-                raise ValueError("true_false questions must have exactly 2 options")
-        elif len(options) < 2:
-            raise ValueError("questions must have at least 2 options")
-
-        correct_count = sum(1 for o in options if o.is_correct)
-        if self.type == QuestionType.mcq_single:
-            if correct_count != 1:
-                raise ValueError("mcq_single must have exactly 1 correct option")
-        elif self.type == QuestionType.true_false:
-            if correct_count != 1:
-                raise ValueError("true_false must have exactly 1 correct option")
-        elif self.type == QuestionType.mcq_multi:
-            if correct_count < 1:
-                raise ValueError("mcq_multi must have at least 1 correct option")
+        validate_question_options(self.type, self.options)
         return self
 
 
@@ -108,6 +124,15 @@ class QuestionUpdateAdmin(BaseModel):
     text: Optional[str] = None
     marks: Optional[int] = None
     timer_sec: Optional[int] = None
+    # When provided, replaces the question's options entirely (see
+    # admin/quizzes.py::update_question) — validated there against the
+    # effective type, since a PATCH may omit `type` and keep the existing one.
+    options: Optional[List[OptionCreateAdmin]] = None
+
+    @field_validator("timer_sec")
+    @classmethod
+    def timer_valid(cls, v: Optional[int]) -> Optional[int]:
+        return v if v is None else _validate_timer_sec(v)
 
 
 class QuestionReadAdmin(BaseModel):

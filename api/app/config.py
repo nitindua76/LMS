@@ -56,6 +56,25 @@ class Settings(BaseSettings):
     # SCORM session token (separate from user JWT)
     SCORM_TOKEN_SECRET: str = "dev-scorm-secret-replace-in-production"
 
+    # LiveKit (self-hosted) — LIVEKIT_URL is the wss:// address the browser
+    # connects to; LIVEKIT_SERVER_URL is how the api container reaches the
+    # Room Service API (usually the same host, http(s):// scheme) and may
+    # differ from LIVEKIT_URL when the api talks to it over the compose
+    # network directly instead of through the public reverse proxy.
+    LIVEKIT_URL: str = "ws://localhost:7880"
+    LIVEKIT_SERVER_URL: str = "http://localhost:7880"
+    LIVEKIT_API_KEY: str = "devkey"
+    LIVEKIT_API_SECRET: str = "dev-livekit-secret-replace-in-production"
+    # Minimum minutes of a session's scheduled duration an attendee must be
+    # present for (cumulative, across rejoins) before it counts as attended
+    # for completion purposes.
+    SESSION_ATTENDANCE_COMPLETION_PCT: int = 60
+
+    # SMTP (session reminder emails) — points at the Mailpit dev container by default
+    SMTP_HOST: str = "localhost"
+    SMTP_PORT: int = 1025
+    SMTP_FROM: str = "lms@example.com"
+
     # Rate limiting
     LOGIN_MAX_ATTEMPTS_PER_IP: int = 20
     LOGIN_WINDOW_SECONDS: int = 300

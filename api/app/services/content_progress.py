@@ -11,9 +11,11 @@ only content_done once every native content item in it has an individually
 from datetime import datetime, timezone
 from typing import Dict, Optional
 
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.models.course import ContentType, Section
 from app.models.enrollment import ContentProgress, Enrollment
 
@@ -94,6 +96,39 @@ def mark_done(db: Session, enrollment_id: int, content_item_id: int) -> None:
         db.flush()
 
 
+def sync_meeting_attendance(db: Session, live_session, user_id: int) -> None:
+    """
+    Meeting content items complete on cumulative attended duration rather
+    than a client-reported watch time: sums every LiveSessionParticipant row
+    (across rejoins) for this user+session and marks the item done once that
+    reaches SESSION_ATTENDANCE_COMPLETION_PCT of the session's scheduled
+    duration. Call this whenever an attendance row closes — from the LiveKit
+    webhook adapter (participant_left / room_finished) and from the
+    scheduler when a session is auto-ended.
+    """
+    from app.models.live_session import LiveSessionParticipant
+
+    content_item = live_session.content_item
+    course_id = content_item.section.course_id
+    enrollment = db.query(Enrollment).filter(
+        Enrollment.user_id == user_id, Enrollment.course_id == course_id,
+    ).first()
+    if not enrollment:
+        return
+
+    total_attended = db.query(
+        func.coalesce(func.sum(LiveSessionParticipant.duration_sec), 0)
+    ).filter(
+        LiveSessionParticipant.live_session_id == live_session.id,
+        LiveSessionParticipant.user_id == user_id,
+    ).scalar()
+
+    scheduled_duration = max(1, int((live_session.end_at - live_session.start_at).total_seconds()))
+    attended_pct = (total_attended / scheduled_duration) * 100
+    if attended_pct >= settings.SESSION_ATTENDANCE_COMPLETION_PCT:
+        mark_done(db, enrollment.id, content_item.id)
+
+
 def reset(db: Session, enrollment_id: int, section: Section) -> None:
     """Clear all per-item progress for this section (admin retry/reset path)."""
     item_ids = [ci.id for ci in section.content_items]
@@ -151,7 +186,10 @@ def all_native_items_done(db: Session, enrollment: Enrollment, section: Section)
     requires all of them, matching how multi-SCO SCORM manifests are already
     gated in bridge.py.
     """
-    native_items = [ci for ci in section.content_items if ci.type in (ContentType.video, ContentType.pdf)]
+    native_items = [
+        ci for ci in section.content_items
+        if ci.type in (ContentType.video, ContentType.pdf, ContentType.meeting)
+    ]
     if not native_items:
         return True
 

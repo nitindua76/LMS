@@ -1,0 +1,23 @@
+# Internal-network TLS — no public DNS/IP, so Caddy issues its own
+# self-signed "internal" certificate instead of requesting one from Let's
+# Encrypt (which needs a real, internet-reachable domain). Browsers on other
+# machines will show a "not trusted" warning until Caddy's root CA is
+# installed on them — see DEPLOYMENT.md for the one-time export/distribute
+# step (via Group Policy or manual install). This is the standard way to do
+# internal HTTPS without public DNS, and it's required: camera/mic access
+# for live sessions only works in a secure context (HTTPS, or literally
+# "localhost") — plain http:// on an internal hostname/IP silently blocks it.
+
+{$INTERNAL_HOSTNAME} {
+	tls internal
+	reverse_proxy web:80
+}
+
+# LiveKit signaling — its own port so no path-rewriting is needed; Caddy
+# terminates wss:// here and proxies plain ws to the livekit container.
+# Media (UDP) never goes through Caddy — see docker-compose.prod.yml, it's
+# published directly from the livekit service.
+{$INTERNAL_HOSTNAME}:7880 {
+	tls internal
+	reverse_proxy livekit:7880
+}

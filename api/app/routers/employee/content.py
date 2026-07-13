@@ -11,6 +11,7 @@ from app.models.course import ContentItem, ContentType, Section
 from app.models.enrollment import Enrollment, EnrollmentStatus
 from app.standards import bridge, xapi as xapi_svc
 from app.services import content_progress
+from app.services.enrollment import enrollment_deadline_passed
 
 router = APIRouter(prefix="/my", tags=["employee-content"])
 
@@ -29,8 +30,7 @@ def _get_enrollment_and_section(
     if enrollment.status == EnrollmentStatus.expired:
         raise HTTPException(status_code=403, detail="Enrollment has expired")
 
-    # Check course deadline
-    if enrollment.deadline_at and datetime.now(timezone.utc) > enrollment.deadline_at:
+    if enrollment_deadline_passed(enrollment):
         enrollment.status = EnrollmentStatus.expired
         db.commit()
         raise HTTPException(status_code=403, detail="Course deadline has passed")

@@ -21,6 +21,7 @@ from app.models.enrollment import Enrollment, EnrollmentStatus
 from app.models.package import LearningPackage, PackageFormat
 from app.models.cmi5 import Cmi5Registration, Cmi5Session, Cmi5SessionState, LaunchMode
 from app.config import settings
+from app.services.enrollment import enrollment_deadline_passed
 from app.standards import bridge, xapi as xapi_svc
 
 router = APIRouter(tags=["employee-cmi5"])
@@ -46,7 +47,9 @@ def cmi5_launch(
     ).first()
     if not enrollment:
         raise HTTPException(status_code=404, detail="Enrollment not found")
-    if enrollment.deadline_at and datetime.now(timezone.utc) > enrollment.deadline_at:
+    if enrollment_deadline_passed(enrollment):
+        enrollment.status = EnrollmentStatus.expired
+        db.commit()
         raise HTTPException(status_code=403, detail="Course deadline has passed")
 
     section = db.query(Section).filter(

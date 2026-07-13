@@ -68,6 +68,26 @@ services:
       timeout: 5s
       retries: 5
 
+  livekit:
+    image: livekit/livekit-server:latest
+    command: --config /etc/livekit.yaml
+    volumes:
+      - ./livekit/livekit.yaml:/etc/livekit.yaml:ro
+    environment:
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY:-devkey}: ${LIVEKIT_API_SECRET:-dev-livekit-secret-replace-in-production}"
+    ports:
+      - "7880:7880"   # signaling / room service HTTP
+      - "7881:7881"   # RTC over TCP (fallback when UDP is blocked)
+      - "55000-55100:55000-55100/udp"
+    depends_on:
+      redis:
+        condition: service_healthy
+    # Production: put this behind a TLS-terminating reverse proxy (wss://),
+    # enable turn.enabled in livekit.yaml with a real domain + cert, and run
+    # 2+ replicas — the redis-backed config above already supports that
+    # without any change to this file beyond `deploy.replicas` / a second
+    # service block.
+
   mailpit:
     image: axllent/mailpit:latest
     ports:
@@ -93,6 +113,12 @@ services:
       LRS_ENDPOINT: http://lrs:9090
       STORAGE_BACKEND: local
       STORAGE_LOCAL_PATH: /data/lms-content
+      LIVEKIT_URL: ws://localhost:7880
+      LIVEKIT_SERVER_URL: http://livekit:7880
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-devkey}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-dev-livekit-secret-replace-in-production}
+      SMTP_HOST: mailpit
+      SMTP_PORT: 1025
     ports:
       - "8000:8000"
     depends_on:
@@ -104,6 +130,8 @@ services:
         condition: service_healthy
       lrs:
         condition: service_healthy
+      livekit:
+        condition: service_started
     volumes:
       - ./api:/app
       - lms_content:/data/lms-content

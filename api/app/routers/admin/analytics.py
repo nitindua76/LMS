@@ -2,13 +2,14 @@ import re
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, and_, or_
 
 from app.database import get_db
 from app.dependencies import require_admin
 from app.models.user import User
-from app.models.course import Course, CourseStatus, Section, ContentItem, CourseTarget, Quiz
+from app.models.course import Course, CourseStatus, Section, ContentItem, CourseTarget, CourseTargetUser, Quiz
 from app.models.discipline import Discipline
 from app.models.level import Level
 from app.models.enrollment import Enrollment, EnrollmentStatus, SectionProgress, QuizAttempt, QuizAttemptStatus, ProgressSource
@@ -39,16 +40,24 @@ def get_targeted_user_ids(db: Session, course_id: int) -> set:
     One query per course instead of one query per (course, target) pair — every
     CourseTarget row is a required (discipline_id, level_id) pair (both columns
     are NOT NULL on the model), so all targets can be matched in a single
-    query via an OR of per-pair AND conditions.
+    query via an OR of per-pair AND conditions. Unioned with anyone
+    individually added via CourseTargetUser (models/course.py).
     """
-    targets = db.query(CourseTarget).filter(CourseTarget.course_id == course_id).all()
-    if not targets:
-        return set()
+    ids: set = set()
 
-    pairs = {(t.discipline_id, t.level_id) for t in targets}
-    conditions = [and_(User.discipline_id == d, User.level_id == l) for d, l in pairs]
-    rows = db.query(User.id).filter(User.role == "employee", or_(*conditions)).all()
-    return {row[0] for row in rows}
+    targets = db.query(CourseTarget).filter(CourseTarget.course_id == course_id).all()
+    if targets:
+        pairs = {(t.discipline_id, t.level_id) for t in targets}
+        conditions = [and_(User.discipline_id == d, User.level_id == l) for d, l in pairs]
+        rows = db.query(User.id).filter(User.role == "employee", or_(*conditions)).all()
+        ids.update(row[0] for row in rows)
+
+    individual_rows = db.query(CourseTargetUser.user_id).filter(
+        CourseTargetUser.course_id == course_id
+    ).all()
+    ids.update(row[0] for row in individual_rows)
+
+    return ids
 
 def calculate_progress_pct(db: Session, enrollment_id: int, user_id: int, course_id: int) -> float:
     total_sections = db.query(func.count(Section.id)).filter(Section.course_id == course_id).scalar() or 1
@@ -284,6 +293,28 @@ def get_courses_analytics(db: Session = Depends(get_db), _: User = Depends(requi
     return [_compute_course_analytics(db, c) for c in courses]
 
 
+@router.get("/courses/{course_id}/export")
+def export_course_report(
+    course_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+    """Downloadable .xlsx report — see services/excel_export.py for what's in it."""
+    from app.services.excel_export import build_course_report
+
+    course = db.get(Course, course_id)
+    if not course:
+        raise HTTPException(status_code=404, detail="Course not found")
+
+    buf = build_course_report(db, course)
+    filename = re.sub(r"[^A-Za-z0-9_-]+", "_", course.title).strip("_") or "course"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}_report.xlsx"'},
+    )
+
+
 @router.get("/courses/{course_id}")
 def get_course_analytics_detail(
     course_id: int,
@@ -312,10 +343,12 @@ def _compute_employee_analytics(
     courses: List[Course],
     targets_by_course: Dict[int, list],
     timeline_limit: int = 15,
+    individual_by_course: Optional[Dict[int, set]] = None,
 ) -> dict:
     if True:
         enrollments = db.query(Enrollment).filter(Enrollment.user_id == emp.id).all()
         enrollment_map = {e.course_id: e for e in enrollments}
+        individual_by_course = individual_by_course or {}
 
         targeted_courses_list = []
         completed_targeted_count = 0
@@ -327,7 +360,7 @@ def _compute_employee_analytics(
         for course in courses:
             targets = targets_by_course.get(course.id, [])
 
-            matches = False
+            matches = emp.id in individual_by_course.get(course.id, set())
             for t in targets:
                 match_disc = (t.discipline_id is None) or (emp.discipline_id == t.discipline_id)
                 match_lvl = (t.level_id is None) or (emp.level_id == t.level_id)
@@ -420,6 +453,13 @@ def _load_targets_by_course(db: Session) -> Dict[int, list]:
     return by_course
 
 
+def _load_individual_targets_by_course(db: Session) -> Dict[int, set]:
+    by_course: Dict[int, set] = {}
+    for row in db.query(CourseTargetUser).all():
+        by_course.setdefault(row.course_id, set()).add(row.user_id)
+    return by_course
+
+
 @router.get("/employees")
 def get_employees_analytics(db: Session = Depends(get_db), _: User = Depends(require_admin)):
     employees = db.query(User).options(
@@ -428,8 +468,12 @@ def get_employees_analytics(db: Session = Depends(get_db), _: User = Depends(req
     ).filter(User.role == "employee").all()
     courses = db.query(Course).all()
     targets_by_course = _load_targets_by_course(db)
+    individual_by_course = _load_individual_targets_by_course(db)
 
-    return [_compute_employee_analytics(db, emp, courses, targets_by_course) for emp in employees]
+    return [
+        _compute_employee_analytics(db, emp, courses, targets_by_course, individual_by_course=individual_by_course)
+        for emp in employees
+    ]
 
 
 @router.get("/employees/{employee_id}")
@@ -449,7 +493,10 @@ def get_employee_analytics_detail(
 
     courses = db.query(Course).all()
     targets_by_course = _load_targets_by_course(db)
-    detail = _compute_employee_analytics(db, emp, courses, targets_by_course, timeline_limit=200)
+    individual_by_course = _load_individual_targets_by_course(db)
+    detail = _compute_employee_analytics(
+        db, emp, courses, targets_by_course, timeline_limit=200, individual_by_course=individual_by_course,
+    )
 
     course_titles_by_id = {c.id: c for c in courses}
     courses_with_time: List[dict] = []

@@ -21,6 +21,7 @@ class ContentType(str, enum.Enum):
     pdf = "pdf"
     scorm = "scorm"
     cmi5 = "cmi5"
+    meeting = "meeting"
 
 
 class QuestionType(str, enum.Enum):
@@ -98,6 +99,31 @@ class CourseTarget(Base):
     course: Mapped["Course"] = relationship("Course", back_populates="targets")
     discipline: Mapped["Discipline"] = relationship("Discipline", back_populates="course_targets")  # type: ignore[name-defined]
     level: Mapped["Level"] = relationship("Level", back_populates="course_targets")  # type: ignore[name-defined]
+
+
+class CourseTargetUser(Base):
+    """
+    Individually-targeted employee for a course — additive on top of the
+    course's normal CourseTarget (discipline+level) audience, the same
+    "additive override" shape as SessionAudienceRule.user_id for live
+    sessions (see models/live_session.py). Lets an admin add specific
+    employees to a course regardless of their discipline/level.
+    """
+    __tablename__ = "course_target_users"
+    __table_args__ = (
+        UniqueConstraint("course_id", "user_id", name="uq_course_target_user"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    course_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("courses.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+
+    course: Mapped["Course"] = relationship("Course")
+    user: Mapped["User"] = relationship("User")  # type: ignore[name-defined]
 
 
 class Section(Base):

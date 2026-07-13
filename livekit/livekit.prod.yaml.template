@@ -1,0 +1,36 @@
+# Template — scripts/deploy.ps1 substitutes __NODE_IP__, __LIVEKIT_KEY__,
+# and __LIVEKIT_SECRET__ from .env.prod and writes the result to
+# livekit.prod.yaml (git-ignored; never commit the real keys).
+port: 7880
+rtc:
+  tcp_port: 7881
+  port_range_start: __RTC_PORT_RANGE_START__
+  port_range_end: __RTC_PORT_RANGE_END__
+  use_external_ip: false
+  # Must be the VM's actual internal LAN IP (not 127.0.0.1 — real employee
+  # machines elsewhere on the corporate network need to reach this for
+  # media/ICE, not just a browser on the same box). See the same class of
+  # bug this fixed in dev: docker's own bridge-network IP is NOT reachable
+  # from other machines, so this has to be set explicitly.
+  node_ip: __NODE_IP__
+redis:
+  address: redis:6379
+keys:
+  __LIVEKIT_KEY__: __LIVEKIT_SECRET__
+# Without this, LiveKit never calls app/routers/webhooks/livekit.py —
+# attendance rows and automatic session status transitions silently never
+# happen (a real bug this deployment work caught in the dev config too).
+webhook:
+  api_key: __LIVEKIT_KEY__
+  urls:
+    - http://api:8000/webhooks/livekit
+# TURN is left disabled for the initial internal-network rollout — everyone
+# is on the same corporate network/VPN, so the restrictive-firewall case
+# TURN exists for is much less likely than it would be over the public
+# internet. If remote/VPN users hit connectivity trouble, enabling this
+# needs its own TLS cert for the TURN listener (Caddy's internal CA cert
+# isn't directly usable here since TURN terminates its own TLS, not HTTP).
+turn:
+  enabled: false
+  tls_port: 5349
+  udp_port: 3478

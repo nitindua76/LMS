@@ -1,0 +1,165 @@
+# Production stack — internal-network deployment (no public DNS/IP).
+# Differences from docker-compose.yml (dev):
+#   - api/web run from pre-built GHCR images, not bind-mounted source with
+#     --reload / vite dev server.
+#   - Caddy terminates TLS (self-issued "internal" cert — see Caddyfile and
+#     DEPLOYMENT.md for distributing its root CA to client machines) instead
+#     of every service being reachable in plaintext on its own host port.
+#   - db/redis/minio/lrs are NOT published to the host at all — only
+#     reachable from other containers on the compose network.
+#   - No Mailpit — point SMTP_HOST/SMTP_PORT at a real internal mail relay
+#     via .env.prod.
+#
+# Usage: docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
+# (scripts/deploy.ps1 wraps this + pull + migrate + prune).
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER}" ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:9000/minio/health/live" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  content:
+    image: nginx:alpine
+    volumes:
+      - lms_content:/usr/share/nginx/html
+      - ./content-origin/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./content-origin:/usr/share/nginx/html/static:ro
+    ports:
+      # Deliberately plain HTTP and its own port, not behind Caddy: this is
+      # the SCORM/cmi5 content origin, which by design never carries the
+      # session cookie (see main.py's CORS comments) — it doesn't need TLS
+      # the way the main app does.
+      - "5174:80"
+    restart: unless-stopped
+
+  lrs:
+    image: python:3.11-slim
+    working_dir: /app
+    command: >
+      sh -c "pip install fastapi uvicorn --quiet --no-cache-dir && uvicorn main:app --host 0.0.0.0 --port 9090"
+    volumes:
+      - ./mock-lrs:/app
+    healthcheck:
+      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9090/health')" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  livekit:
+    image: livekit/livekit-server:latest
+    command: --config /etc/livekit.yaml
+    volumes:
+      - ./livekit/livekit.prod.yaml:/etc/livekit.yaml:ro
+    environment:
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}"
+    ports:
+      - "7881:7881"   # RTC over TCP (fallback)
+      - "${LIVEKIT_RTC_PORT_RANGE:-55000-55100}:${LIVEKIT_RTC_PORT_RANGE:-55000-55100}/udp"
+      # 7880 (signaling) intentionally NOT published directly — Caddy
+      # terminates TLS for it (see Caddyfile) and reaches it over the
+      # internal compose network instead.
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  api:
+    image: ${REGISTRY:-ghcr.io}/${GITHUB_REPOSITORY:-you/lms}-api:${IMAGE_TAG:-latest}
+    env_file:
+      - .env.prod
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      MINIO_ENDPOINT: minio:9000
+      CONTENT_ORIGIN: http://${INTERNAL_HOSTNAME}:5174
+      API_EXTERNAL_URL: https://${INTERNAL_HOSTNAME}
+      LRS_ENDPOINT: http://lrs:9090
+      STORAGE_BACKEND: minio
+      LIVEKIT_URL: wss://${INTERNAL_HOSTNAME}:7880
+      LIVEKIT_SERVER_URL: http://livekit:7880
+      ENVIRONMENT: production
+      COOKIE_SECURE: "true"
+      COOKIE_SAMESITE: "strict"
+      CORS_ORIGINS: https://${INTERNAL_HOSTNAME}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      lrs:
+        condition: service_healthy
+      livekit:
+        condition: service_started
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
+    restart: unless-stopped
+
+  web:
+    image: ${REGISTRY:-ghcr.io}/${GITHUB_REPOSITORY:-you/lms}-web:${IMAGE_TAG:-latest}
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "443:443"
+      - "7880:7880"   # LiveKit signaling (wss://) — TLS terminated here, proxied to livekit:7880 plain ws
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      INTERNAL_HOSTNAME: ${INTERNAL_HOSTNAME}
+    depends_on:
+      - web
+      - api
+      - livekit
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  lms_content:
+  caddy_data:
+  caddy_config:

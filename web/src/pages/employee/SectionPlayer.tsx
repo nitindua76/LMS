@@ -3,6 +3,7 @@ import { useParams, Link, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { employeeApi, SectionDetail } from "../../api/employee";
 import QuizRunner from "../../components/QuizRunner";
+import SessionJoinPanel from "../../components/LiveSessionRoom";
 
 /**
  * Returns a YouTube embed URL if `url` is a recognizable YouTube link
@@ -86,7 +87,12 @@ export default function SectionPlayer() {
   const [scormComplete, setScormComplete] = useState(false);
   const [quizResult, setQuizResult] = useState<{ passed: boolean; score: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [showMobileToc, setShowMobileToc] = useState(false);
+  // Course-contents pane visibility — collapsible on every screen size so the
+  // SCORM/content area itself can be maximized. Defaults open on desktop
+  // (matches the old always-visible behavior) and closed on narrow/mobile
+  // viewports where screen space is scarce, mirroring the previous
+  // width-gated default.
+  const [showToc, setShowToc] = useState(() => typeof window !== "undefined" && window.innerWidth > 991);
   const [loading, setLoading] = useState(false);
   const [toc, setToc] = useState<any[]>([]);
   const [activeSco, setActiveSco] = useState<string | null>(null);
@@ -162,6 +168,10 @@ export default function SectionPlayer() {
   // limited by real wall-clock time elapsed, so firing more often doesn't
   // weaken it, it just makes legitimate progress register promptly.
   const sendHeartbeatRef = useRef<() => Promise<void>>(async () => {});
+  const contentDoneRef = useRef(contentDone);
+  useEffect(() => {
+    contentDoneRef.current = contentDone;
+  }, [contentDone]);
   useEffect(() => {
     if (!item || item.type !== "video" || !item.url || youTubeEmbedUrl) return;
 
@@ -170,7 +180,8 @@ export default function SectionPlayer() {
       if (!video || !eId || !sId || !item.id) return;
       try {
         const res = await employeeApi.videoProgress(eId, sId, item.id, Math.floor(video.currentTime));
-        if (res.content_done && !contentDone) {
+        if (res.content_done && !contentDoneRef.current) {
+          contentDoneRef.current = true;
           setContentDone(true);
           queryClient.invalidateQueries({ queryKey: ["my-course", cId] });
           if (section?.has_quiz) {
@@ -450,7 +461,10 @@ export default function SectionPlayer() {
                 setActiveSco(node.href);
                 refetchProgress();
                 queryClient.invalidateQueries({ queryKey: ["my-course", cId] });
-                setShowMobileToc(false);
+                // Only auto-close on narrow viewports (overlay-style TOC) — on
+                // desktop the pane stays open across selections since it's a
+                // persistent docked panel, not a one-shot overlay.
+                if (window.innerWidth <= 991) setShowToc(false);
               }}
               style={{
                 cursor: "pointer",
@@ -503,7 +517,7 @@ export default function SectionPlayer() {
   const isScorm = item?.type === "scorm";
 
   return (
-    <div style={{ maxWidth: isScorm ? 1360 : 768, margin: "0 auto", width: "100%", display: isScorm ? "flex" : "block", flexDirection: "column", flex: isScorm ? 1 : "none", minHeight: 0 }}>
+    <div style={{ maxWidth: 1360, margin: "0 auto", width: "100%", display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
       {/* Dynamic unified header */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 20, gap: 12, flexWrap: "wrap" }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
@@ -531,12 +545,12 @@ export default function SectionPlayer() {
             </Link>
           )}
           {isScorm && toc.length > 0 && (
-            <button 
-              className="btn-secondary mobile-toc-toggle"
-              onClick={() => setShowMobileToc(prev => !prev)}
+            <button
+              className="btn-secondary"
+              onClick={() => setShowToc(prev => !prev)}
               style={{ fontSize: 12, padding: "6px 12px", height: "fit-content" }}
             >
-              {showMobileToc ? "✕ Close Index" : "☰ Course Index"}
+              {showToc ? "✕ Hide Contents" : "☰ Show Contents"}
             </button>
           )}
         </div>
@@ -544,19 +558,23 @@ export default function SectionPlayer() {
 
       {/* Content player area */}
       {(phase === "content" || phase === "done") && item && (
-        <div className={isScorm ? "" : "card"} style={{ marginBottom: isScorm ? 0 : 24, display: isScorm ? "flex" : "block", flexDirection: "column", flex: isScorm ? 1 : "none", minHeight: 0 }}>
+        <div className={isScorm ? "" : "card"} style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+          {item.type === "meeting" && (
+            <SessionJoinPanel enrollmentId={eId} sectionId={sId} itemId={item.id} />
+          )}
+
           {item.type === "video" && item.url && youTubeEmbedUrl && (
-            <div>
-              <div style={{ position: "relative", width: "100%", paddingTop: "56.25%", borderRadius: 8, overflow: "hidden", background: "#000" }}>
+            <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+              <div style={{ flex: 1, minHeight: 0, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 8, overflow: "hidden", background: "#000" }}>
                 <iframe
                   src={youTubeEmbedUrl}
                   allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                   allowFullScreen
-                  style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", border: "none" }}
+                  style={{ width: "100%", height: "100%", aspectRatio: "16 / 9", maxWidth: "100%", maxHeight: "100%", border: "none" }}
                   title={item.title || "Video"}
                 />
               </div>
-              <div style={{ marginTop: 16, display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{ marginTop: 16, display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
                 <span style={{ fontSize: 13, color: "var(--text-muted)" }}>
                   Time spent: {videoDwell}s {videoDwell < videoMinimumDwell && `(need ${videoMinimumDwell - videoDwell}s more)`}
                 </span>
@@ -568,33 +586,35 @@ export default function SectionPlayer() {
                   {loading ? "Marking…" : (videoWatchedSubmitted || contentDone) ? "Marked as Watched" : "Mark as Watched"}
                 </button>
               </div>
-              {error && <p style={{ color: "var(--danger)", fontSize: 12, marginTop: 8 }}>{error}</p>}
+              {error && <p style={{ color: "var(--danger)", fontSize: 12, marginTop: 8, flexShrink: 0 }}>{error}</p>}
             </div>
           )}
 
           {item.type === "video" && item.url && !youTubeEmbedUrl && (
-            <div>
-              <video
-                ref={videoRef}
-                src={item.url}
-                controls
-                onLoadedMetadata={(e) => {
-                  // Resume from where the employee left off, once per item —
-                  // don't re-seek on later metadata events (e.g. after the
-                  // user has already scrubbed around).
-                  if (resumedItemIdRef.current === item.id) return;
-                  resumedItemIdRef.current = item.id;
-                  const video = e.currentTarget;
-                  const resumeAt = item.resume_seconds ?? 0;
-                  if (resumeAt > 0 && resumeAt < video.duration) {
-                    video.currentTime = resumeAt;
-                  }
-                }}
-                onPause={() => sendHeartbeatRef.current()}
-                onEnded={() => sendHeartbeatRef.current()}
-                style={{ width: "100%", borderRadius: 8, maxHeight: 400, background: "#000" }}
-              />
-              <p style={{ marginTop: 12, fontSize: 13, color: "var(--text-muted)" }}>
+            <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+              <div style={{ flex: 1, minHeight: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "#000", borderRadius: 8, overflow: "hidden" }}>
+                <video
+                  ref={videoRef}
+                  src={iframeUrl || item.url}
+                  controls
+                  onLoadedMetadata={(e) => {
+                    // Resume from where the employee left off, once per item —
+                    // don't re-seek on later metadata events (e.g. after the
+                    // user has already scrubbed around).
+                    if (resumedItemIdRef.current === item.id) return;
+                    resumedItemIdRef.current = item.id;
+                    const video = e.currentTarget;
+                    const resumeAt = item.resume_seconds ?? 0;
+                    if (resumeAt > 0 && resumeAt < video.duration) {
+                      video.currentTime = resumeAt;
+                    }
+                  }}
+                  onPause={() => sendHeartbeatRef.current()}
+                  onEnded={() => sendHeartbeatRef.current()}
+                  style={{ maxWidth: "100%", maxHeight: "100%", width: "100%", height: "100%", objectFit: "contain" }}
+                />
+              </div>
+              <p style={{ marginTop: 12, fontSize: 13, color: "var(--text-muted)", flexShrink: 0 }}>
                 Watch at least 90% of the video to continue.
                 {!!item.resume_seconds && item.resume_seconds > 0 && (
                   <> Resuming from {Math.floor(item.resume_seconds / 60)}:{String(item.resume_seconds % 60).padStart(2, "0")}.</>
@@ -604,18 +624,20 @@ export default function SectionPlayer() {
           )}
 
           {item.type === "pdf" && item.url && (
-            <div>
-              <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+            <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+              <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8, flexShrink: 0 }}>
                 <button className="btn-secondary" onClick={() => setPdfMaximized(true)} style={{ fontSize: 12, padding: "4px 10px" }}>
                   ⛶ Maximize
                 </button>
               </div>
               <iframe
-                src={item.url}
-                style={{ width: "100%", height: 500, border: "none", borderRadius: 8 }}
+                src={iframeUrl || item.url}
+                allow="fullscreen"
+                allowFullScreen
+                style={{ width: "100%", flex: 1, minHeight: 320, border: "none", borderRadius: 8 }}
                 title="PDF Viewer"
               />
-              <div style={{ marginTop: 16, display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{ marginTop: 16, display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
                 <span style={{ fontSize: 13, color: "var(--text-muted)" }}>
                   Time spent: {pdfDwell}s {pdfDwell < 20 && `(need ${20 - pdfDwell}s more)`}
                 </span>
@@ -627,7 +649,7 @@ export default function SectionPlayer() {
                   {loading ? "Marking…" : (pdfSubmitted || contentDone) ? "Marked as Read" : "Mark as Read"}
                 </button>
               </div>
-              {error && <p style={{ color: "var(--danger)", fontSize: 12, marginTop: 8 }}>{error}</p>}
+              {error && <p style={{ color: "var(--danger)", fontSize: 12, marginTop: 8, flexShrink: 0 }}>{error}</p>}
             </div>
           )}
 
@@ -643,7 +665,9 @@ export default function SectionPlayer() {
                 </button>
               </div>
               <iframe
-                src={item.url}
+                src={iframeUrl || item.url}
+                allow="fullscreen"
+                allowFullScreen
                 style={{ flex: 1, width: "100%", border: "none", borderRadius: 8, background: "#fff" }}
                 title="PDF Viewer (Maximized)"
               />
@@ -672,9 +696,9 @@ export default function SectionPlayer() {
                 </p>
               )}
               <div className="player-layout" style={{ flex: 1, minHeight: 0 }}>
-                {/* Table of Contents Sidebar */}
-                {toc.length > 0 && (
-                  <div className={`card player-sidebar ${showMobileToc ? "open" : ""}`} style={{ padding: "16px 12px" }}>
+                {/* Table of Contents Sidebar — collapsible so the SCORM frame can be maximized */}
+                {toc.length > 0 && showToc && (
+                  <div className="card player-sidebar" style={{ padding: "16px 12px" }}>
                     <h3 style={{ fontSize: 12, fontWeight: 700, marginBottom: 12, paddingBottom: 8, borderBottom: "1px solid var(--border)", textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--text-muted)" }}>
                       Course Contents
                     </h3>
@@ -721,8 +745,8 @@ export default function SectionPlayer() {
           )}
 
           {item.type === "cmi5" && (
-            <div>
-              <p style={{ marginBottom: 16, color: "var(--text-muted)", fontSize: 14 }}>
+            <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, alignItems: "center", justifyContent: "center", textAlign: "center" }}>
+              <p style={{ marginBottom: 16, color: "var(--text-muted)", fontSize: 14, maxWidth: 420 }}>
                 Click the button below to launch the cmi5 learning activity in a new window.
                 Return here when finished.
               </p>
@@ -741,13 +765,17 @@ export default function SectionPlayer() {
 
       {/* Quiz phase */}
       {phase === "quiz" && (
-        <div style={{ marginBottom: 24 }}>
-          <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>Section Quiz</h2>
-          <QuizRunner
-            enrollmentId={eId}
-            sectionId={sId}
-            onComplete={handleQuizComplete}
-          />
+        <div className="card" style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+          <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16, flexShrink: 0 }}>Section Quiz</h2>
+          <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, alignItems: "center", justifyContent: "center" }}>
+            <div style={{ width: "100%", maxWidth: 640 }}>
+              <QuizRunner
+                enrollmentId={eId}
+                sectionId={sId}
+                onComplete={handleQuizComplete}
+              />
+            </div>
+          </div>
         </div>
       )}
     </div>

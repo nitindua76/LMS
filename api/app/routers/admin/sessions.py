@@ -187,12 +187,21 @@ def list_participants(
 ):
     item = _get_meeting_item(db, course_id, section_id, item_id)
     session = _get_session(db, item)
-    return (
+    rows = (
         db.query(LiveSessionParticipant)
+        .options(joinedload(LiveSessionParticipant.user))
         .filter(LiveSessionParticipant.live_session_id == session.id)
         .order_by(LiveSessionParticipant.joined_at)
         .all()
     )
+    return [
+        ParticipantRead(
+            id=r.id, user_id=r.user_id, name=r.user.name, email=r.user.email, role=r.role,
+            joined_at=r.joined_at, left_at=r.left_at, duration_sec=r.duration_sec,
+            camera_on=r.camera_on, mic_on=r.mic_on, screen_sharing=r.screen_sharing,
+        )
+        for r in rows
+    ]
 
 
 # ── Audience rules ───────────────────────────────────────────────────────────

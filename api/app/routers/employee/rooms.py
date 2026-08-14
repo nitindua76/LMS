@@ -14,15 +14,19 @@ from sqlalchemy.orm import Session, joinedload
 from app.database import get_db
 from app.dependencies import get_current_user, verify_csrf, get_conferencing_client
 from app.conferencing import ConferencingClient, ParticipantPermissions
+from app.models.employee_group import EmployeeGroup
 from app.models.user import User
-from app.models.instant_room import InstantRoom, InstantRoomMember, InstantRoomParticipant, RoomAdmitMode
+from app.models.instant_room import (
+    InstantRoom, InstantRoomMember, InstantRoomParticipant, InstantRoomGroupTarget, RoomAdmitMode,
+)
 from app.schemas.instant_room import (
     InstantRoomCreate, InstantRoomRead, MemberRead, MemberAddByUser, MemberAddByCpf,
-    RoomJoinResponse, PendingParticipant,
+    RoomJoinResponse, PendingParticipant, RoomGroupTargetRead, RoomGroupTargetCreate, GroupSearchResult,
 )
 from app.services import live_session_identity as identity_svc
 from app.services import mail_api
 from app.services.audit import audit
+from app.services.employee_groups import user_matches_group, count_group_members, InvalidRuleError
 from app.services.provisioning import get_or_provision_by_cpf
 from app.services.settings_service import get_setting, get_setting_bool
 from app.services.sso import get_employee_api_client
@@ -43,7 +47,11 @@ def _require_rooms_enabled(db: Session) -> None:
 def _load_room(db: Session, room_id: int) -> InstantRoom:
     room = (
         db.query(InstantRoom)
-        .options(joinedload(InstantRoom.members).joinedload(InstantRoomMember.user), joinedload(InstantRoom.owner))
+        .options(
+            joinedload(InstantRoom.members).joinedload(InstantRoomMember.user),
+            joinedload(InstantRoom.owner),
+            joinedload(InstantRoom.group_targets).joinedload(InstantRoomGroupTarget.group),
+        )
         .filter(InstantRoom.id == room_id)
         .first()
     )
@@ -52,8 +60,19 @@ def _load_room(db: Session, room_id: int) -> InstantRoom:
     return room
 
 
-def _can_see_room(room: InstantRoom, user: User) -> bool:
-    return room.owner_user_id == user.id or any(m.user_id == user.id for m in room.members)
+def _can_see_room(db: Session, room: InstantRoom, user: User) -> bool:
+    if room.owner_user_id == user.id or any(m.user_id == user.id for m in room.members):
+        return True
+    # Additive group-based access — anyone currently matching ANY group
+    # targeted at this room, resolved live (never materialized), same
+    # principle as CourseTargetGroup for courses.
+    for target in room.group_targets:
+        try:
+            if user_matches_group(db, user, target.group):
+                return True
+        except InvalidRuleError:
+            continue
+    return False
 
 
 def _join_url(db: Session, room: InstantRoom) -> str:
@@ -62,6 +81,13 @@ def _join_url(db: Session, room: InstantRoom) -> str:
 
 
 def _to_read(db: Session, room: InstantRoom, current_user: User) -> InstantRoomRead:
+    group_targets = []
+    for t in room.group_targets:
+        try:
+            count = count_group_members(db, t.group)
+        except InvalidRuleError:
+            count = 0
+        group_targets.append(RoomGroupTargetRead(id=t.id, group_id=t.group_id, group_name=t.group.name, member_count=count))
     return InstantRoomRead(
         id=room.id, owner_user_id=room.owner_user_id, owner_name=room.owner.name,
         name=room.name, room_name=room.room_name, admit_mode=room.admit_mode,
@@ -70,6 +96,7 @@ def _to_read(db: Session, room: InstantRoom, current_user: User) -> InstantRoomR
             MemberRead(id=m.id, user_id=m.user_id, name=m.user.name, email=m.user.email, added_via_cpf=m.added_via_cpf)
             for m in room.members
         ],
+        group_targets=group_targets,
         is_owner=room.owner_user_id == current_user.id,
         join_url=_join_url(db, room),
     )
@@ -80,7 +107,9 @@ def list_my_rooms(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """Rooms the user owns, plus rooms they're a member of."""
+    """Rooms the user owns, is individually a member of, or currently
+    matches a group targeted at (resolved live, same as course/session
+    group-targeting elsewhere)."""
     owned = db.query(InstantRoom).filter(InstantRoom.owner_user_id == user.id).all()
     member_of = (
         db.query(InstantRoom)
@@ -88,9 +117,25 @@ def list_my_rooms(
         .filter(InstantRoomMember.user_id == user.id)
         .all()
     )
+    group_targeted = (
+        db.query(InstantRoom)
+        .join(InstantRoomGroupTarget, InstantRoomGroupTarget.room_id == InstantRoom.id)
+        .join(EmployeeGroup, EmployeeGroup.id == InstantRoomGroupTarget.group_id)
+        .all()
+    )
+    via_group = []
+    for room in group_targeted:
+        for target in room.group_targets:
+            try:
+                if user_matches_group(db, user, target.group):
+                    via_group.append(room)
+                    break
+            except InvalidRuleError:
+                continue
+
     seen_ids = set()
     rooms = []
-    for room in owned + member_of:
+    for room in owned + member_of + via_group:
         if room.id not in seen_ids:
             seen_ids.add(room.id)
             rooms.append(room)
@@ -99,7 +144,11 @@ def list_my_rooms(
         return []
     full = (
         db.query(InstantRoom)
-        .options(joinedload(InstantRoom.members).joinedload(InstantRoomMember.user), joinedload(InstantRoom.owner))
+        .options(
+            joinedload(InstantRoom.members).joinedload(InstantRoomMember.user),
+            joinedload(InstantRoom.owner),
+            joinedload(InstantRoom.group_targets).joinedload(InstantRoomGroupTarget.group),
+        )
         .filter(InstantRoom.id.in_([r.id for r in rooms]))
         .order_by(InstantRoom.created_at.desc())
         .all()
@@ -118,7 +167,7 @@ def get_room(
     actually joining. 403s for anyone not the owner or an invited member,
     same visibility rule as everywhere else."""
     room = _load_room(db, room_id)
-    if room.owner_user_id != user.id and not _can_see_room(room, user):
+    if room.owner_user_id != user.id and not _can_see_room(db, room, user):
         raise HTTPException(status_code=403, detail="You have not been added to this room")
     return _to_read(db, room, user)
 
@@ -239,6 +288,115 @@ def _add_member(db: Session, room: InstantRoom, target: User, *, added_via_cpf: 
     return MemberRead(id=member.id, user_id=target.id, name=target.name, email=target.email, added_via_cpf=added_via_cpf)
 
 
+@router.get("/groups/search", response_model=List[GroupSearchResult])
+def search_groups(
+    q: str = "",
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """
+    Typeahead search for the group-attach UI — deliberately available to
+    ANY authenticated user (a room owner can be an ordinary employee, not
+    just an admin), unlike the full admin Employee Groups management API
+    (create/edit/delete rules stays admin-only). Returns just enough to
+    pick a group: id, name, live member count — never the rule
+    definitions themselves.
+    """
+    query = db.query(EmployeeGroup)
+    if q.strip():
+        query = query.filter(EmployeeGroup.name.ilike(f"%{q.strip()}%"))
+    groups = query.order_by(EmployeeGroup.name).limit(20).all()
+    out = []
+    for g in groups:
+        try:
+            count = count_group_members(db, g)
+        except InvalidRuleError:
+            count = 0
+        out.append(GroupSearchResult(id=g.id, name=g.name, member_count=count))
+    return out
+
+
+@router.get("/{room_id}/group-targets", response_model=List[RoomGroupTargetRead])
+def list_room_group_targets(
+    room_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    room = _load_room(db, room_id)
+    if room.owner_user_id != user.id:
+        raise HTTPException(status_code=403, detail="Only the room owner can manage members")
+    out = []
+    for t in room.group_targets:
+        try:
+            count = count_group_members(db, t.group)
+        except InvalidRuleError:
+            count = 0
+        out.append(RoomGroupTargetRead(id=t.id, group_id=t.group_id, group_name=t.group.name, member_count=count))
+    return out
+
+
+@router.post("/{room_id}/group-targets", response_model=RoomGroupTargetRead, status_code=201,
+             dependencies=[Depends(verify_csrf)])
+def add_room_group_target(
+    room_id: int,
+    body: RoomGroupTargetCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Attaches a whole dynamic EmployeeGroup to this room — additive on top
+    of individually-added members, resolved live (see _can_see_room)."""
+    room = db.get(InstantRoom, room_id)
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+    if room.owner_user_id != user.id:
+        raise HTTPException(status_code=403, detail="Only the room owner can manage members")
+
+    group = db.get(EmployeeGroup, body.group_id)
+    if not group:
+        raise HTTPException(status_code=422, detail="Group not found")
+
+    existing = db.query(InstantRoomGroupTarget).filter(
+        InstantRoomGroupTarget.room_id == room_id, InstantRoomGroupTarget.group_id == body.group_id,
+    ).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="This group is already targeted at this room")
+
+    target = InstantRoomGroupTarget(room_id=room_id, group_id=body.group_id)
+    db.add(target)
+    db.flush()
+    audit(db, actor_id=user.id, action="add_instant_room_group_target", target_type="instant_room",
+          target_id=room_id, detail={"group_id": body.group_id})
+    db.commit()
+    try:
+        count = count_group_members(db, group)
+    except InvalidRuleError:
+        count = 0
+    return RoomGroupTargetRead(id=target.id, group_id=group.id, group_name=group.name, member_count=count)
+
+
+@router.delete("/{room_id}/group-targets/{target_id}", status_code=204, dependencies=[Depends(verify_csrf)])
+def remove_room_group_target(
+    room_id: int,
+    target_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    room = db.get(InstantRoom, room_id)
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+    if room.owner_user_id != user.id:
+        raise HTTPException(status_code=403, detail="Only the room owner can manage members")
+    target = db.query(InstantRoomGroupTarget).filter(
+        InstantRoomGroupTarget.id == target_id, InstantRoomGroupTarget.room_id == room_id,
+    ).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="Group target not found")
+    db.delete(target)
+    audit(db, actor_id=user.id, action="remove_instant_room_group_target", target_type="instant_room",
+          target_id=room_id, detail={"target_id": target_id})
+    db.commit()
+
+
 @router.delete("/{room_id}/members/{member_id}", status_code=204, dependencies=[Depends(verify_csrf)])
 def remove_member(
     room_id: int,
@@ -274,7 +432,7 @@ async def join_room(
     _require_rooms_enabled(db)
     room = _load_room(db, room_id)
     is_host = room.owner_user_id == user.id
-    if not is_host and not _can_see_room(room, user):
+    if not is_host and not _can_see_room(db, room, user):
         raise HTTPException(status_code=403, detail="You have not been added to this room")
 
     if not room.active:

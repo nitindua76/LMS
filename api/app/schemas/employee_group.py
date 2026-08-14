@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import List, Optional
 from pydantic import BaseModel
-from app.models.employee_group import RuleOperator
+from app.models.employee_group import RuleOperator, GroupMatchType
 
 
 class RuleInput(BaseModel):
@@ -23,12 +23,14 @@ class EmployeeGroupRuleRead(BaseModel):
 class EmployeeGroupCreate(BaseModel):
     name: str
     description: Optional[str] = None
+    match_type: GroupMatchType = GroupMatchType.all
     rules: List[RuleInput] = []
 
 
 class EmployeeGroupUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
+    match_type: Optional[GroupMatchType] = None
 
 
 class EmployeeGroupRead(BaseModel):
@@ -36,6 +38,7 @@ class EmployeeGroupRead(BaseModel):
     id: int
     name: str
     description: Optional[str] = None
+    match_type: GroupMatchType
     created_at: datetime
     updated_at: datetime
     rules: List[EmployeeGroupRuleRead] = []
@@ -47,12 +50,27 @@ class EmployeeGroupSummary(BaseModel):
     id: int
     name: str
     description: Optional[str] = None
+    match_type: GroupMatchType
     member_count: int = 0
     rule_count: int = 0
 
 
 class PreviewRequest(BaseModel):
+    match_type: GroupMatchType = GroupMatchType.all
     rules: List[RuleInput]
+
+
+class GroupMember(BaseModel):
+    id: int
+    name: str
+    email: str
+    cpf: Optional[str] = None
+    designation: Optional[str] = None
+
+
+class GroupMembersResponse(BaseModel):
+    total: int
+    members: List[GroupMember]
 
 
 class PreviewMember(BaseModel):

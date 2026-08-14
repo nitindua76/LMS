@@ -108,6 +108,31 @@ async def livekit_webhook(
         db.commit()
         return
 
+    if event.event in ("track_published", "track_unpublished") and event.track:
+        # Same live camera/mic/screen-share tracking as the Instant Room
+        # path below — lets the admin dashboard and per-course attendance
+        # history show who shared their screen/camera during a scheduled
+        # training session, not just ad-hoc rooms.
+        open_row = (
+            db.query(LiveSessionParticipant)
+            .filter(
+                LiveSessionParticipant.live_session_id == session.id,
+                LiveSessionParticipant.user_id == user_id,
+                LiveSessionParticipant.left_at.is_(None),
+            )
+            .first()
+        )
+        if open_row:
+            is_on = event.event == "track_published"
+            if event.track.source == "camera":
+                open_row.camera_on = is_on
+            elif event.track.source == "microphone":
+                open_row.mic_on = is_on
+            elif event.track.source == "screen_share":
+                open_row.screen_sharing = is_on
+            db.commit()
+        return
+
 
 def _close_dangling_participants(db: Session, session: LiveSession, now: datetime) -> None:
     """A room_finished event means every still-open attendance row must be closed —

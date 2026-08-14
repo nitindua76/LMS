@@ -31,6 +31,25 @@ class MemberRead(BaseModel):
     added_via_cpf: bool
 
 
+class RoomGroupTargetRead(BaseModel):
+    id: int
+    group_id: int
+    group_name: str
+    member_count: int
+
+
+class RoomGroupTargetCreate(BaseModel):
+    group_id: int
+
+
+class GroupSearchResult(BaseModel):
+    """Minimal shape for the typeahead group-attach UI — never exposes a
+    group's rule definitions, just enough to pick one."""
+    id: int
+    name: str
+    member_count: int
+
+
 class InstantRoomRead(BaseModel):
     id: int
     owner_user_id: int
@@ -42,6 +61,7 @@ class InstantRoomRead(BaseModel):
     active: bool
     created_at: datetime
     members: List[MemberRead] = []
+    group_targets: List[RoomGroupTargetRead] = []
     is_owner: bool = False
     # Shareable link anyone with room access can use to join directly (see
     # routers/employee/rooms.py's _join_url) — used by the "Copy link"

@@ -65,6 +65,11 @@ class Settings(BaseSettings):
     LIVEKIT_SERVER_URL: str = "http://localhost:7880"
     LIVEKIT_API_KEY: str = "devkey"
     LIVEKIT_API_SECRET: str = "dev-livekit-secret-replace-in-production"
+    # Port LiveKit's Prometheus metrics endpoint listens on (see
+    # livekit/livekit.yaml's `prometheus.port` — must match). Never
+    # published to the host; only reachable from the api container over
+    # the internal compose network. See services/resource_monitor.py.
+    LIVEKIT_PROMETHEUS_PORT: int = 6789
     # Minimum minutes of a session's scheduled duration an attendee must be
     # present for (cumulative, across rejoins) before it counts as attended
     # for completion purposes.

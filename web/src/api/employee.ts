@@ -34,7 +34,16 @@ export interface SessionEligibility {
     timezone: string;
     join_before_start_min: number;
     waiting_room_enabled: boolean;
+    host_user_id: number | null;
   } | null;
+}
+
+export interface SessionParticipant {
+  rule_id: number;
+  user_id: number;
+  name: string;
+  email: string;
+  currently_in_room: boolean;
 }
 
 export interface SessionJoinResponse {
@@ -241,4 +250,19 @@ export const employeeApi = {
     client
       .post(`/my/enrollments/${enrollmentId}/sections/${sectionId}/content/${itemId}/session/leave`, {})
       .then((r) => r.data),
+
+  // Host-side participant management — keyed by the LiveSession's own id,
+  // not the enrollment-nested path above (host manages the session itself,
+  // not "their own enrollment's view of it").
+  listSessionParticipants: (liveSessionId: number) =>
+    client.get<SessionParticipant[]>(`/my/sessions/${liveSessionId}/participants`).then((r) => r.data),
+
+  addSessionParticipantByUser: (liveSessionId: number, userId: number) =>
+    client.post<SessionParticipant>(`/my/sessions/${liveSessionId}/participants`, { user_id: userId }).then((r) => r.data),
+
+  addSessionParticipantByCpf: (liveSessionId: number, cpf: string) =>
+    client.post<SessionParticipant>(`/my/sessions/${liveSessionId}/participants/by-cpf`, { cpf }).then((r) => r.data),
+
+  removeSessionParticipant: (liveSessionId: number, userId: number) =>
+    client.delete(`/my/sessions/${liveSessionId}/participants/${userId}`),
 };

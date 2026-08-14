@@ -124,7 +124,12 @@ class SessionAudienceRule(Base):
 
 
 class LiveSessionParticipant(Base):
-    """Attendance/compliance log, populated from LiveKit webhook events."""
+    """Attendance/compliance log, populated from LiveKit webhook events.
+    camera_on/mic_on/screen_sharing are LIVE state (updated from
+    track_published/track_unpublished, same as InstantRoomParticipant) —
+    once left_at is set they reflect whatever the state was at the moment
+    they left, not "currently," so the admin history view can still show
+    "was screen-sharing when they left" without a separate history table."""
     __tablename__ = "live_session_participants"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -141,6 +146,9 @@ class LiveSessionParticipant(Base):
     joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     left_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     duration_sec: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    camera_on: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    mic_on: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    screen_sharing: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     live_session: Mapped["LiveSession"] = relationship("LiveSession", back_populates="participants")
     user: Mapped["User"] = relationship("User", foreign_keys=[user_id])  # type: ignore[name-defined]

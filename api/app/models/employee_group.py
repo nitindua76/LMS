@@ -20,12 +20,21 @@ from .base import Base
 
 class RuleOperator(str, enum.Enum):
     equals = "equals"
+    not_equals = "not_equals"
     contains = "contains"
+    not_contains = "not_contains"
     in_list = "in_list"  # value is comma-separated
+    is_empty = "is_empty"  # value is ignored — matches NULL or empty string
+    is_not_empty = "is_not_empty"  # value is ignored
     # Hierarchy-aware operators — value is a CPF, resolved to a user at
     # evaluation time (see services/employee_groups.py).
     is_direct_report_of = "is_direct_report_of"
     is_in_subtree_of = "is_in_subtree_of"  # that CPF or anyone under them, any depth
+
+
+class GroupMatchType(str, enum.Enum):
+    all = "all"  # every rule must match (AND) — the original, still-default behavior
+    any = "any"  # at least one rule must match (OR)
 
 
 class EmployeeGroup(Base):
@@ -43,6 +52,11 @@ class EmployeeGroup(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
+    # 'all' (AND, the original/default behavior) or 'any' (OR) across this
+    # group's rules — see services/employee_groups.py::group_member_query.
+    match_type: Mapped[GroupMatchType] = mapped_column(
+        SAEnum(GroupMatchType, name="groupmatchtype"), nullable=False, default=GroupMatchType.all
+    )
 
     created_by: Mapped[Optional["User"]] = relationship("User", foreign_keys=[created_by_id])  # type: ignore[name-defined]
     rules: Mapped[list["EmployeeGroupRule"]] = relationship(
@@ -55,11 +69,12 @@ class EmployeeGroup(Base):
 
 class EmployeeGroupRule(Base):
     """
-    One condition within a group. All rules belonging to the same group are
-    ANDed together (see services/employee_groups.py::_group_query) — a group
-    with zero rules matches nobody, deliberately, rather than everybody, so
-    an incompletely-configured group can never silently target the entire
-    organization.
+    One condition within a group. Rules are combined per the group's
+    match_type — 'all' (AND, the original/default behavior) or 'any' (OR)
+    (see services/employee_groups.py::group_member_query) — a group with
+    zero rules matches nobody either way, deliberately, rather than
+    everybody, so an incompletely-configured group can never silently
+    target the entire organization.
     """
     __tablename__ = "employee_group_rules"
 

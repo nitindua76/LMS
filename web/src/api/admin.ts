@@ -23,7 +23,11 @@ export const settingsApi = {
 };
 
 // ── Employee Groups (dynamic, rule-based) ────────────────────────────────────
-export type RuleOperator = "equals" | "contains" | "in_list" | "is_direct_report_of" | "is_in_subtree_of";
+export type RuleOperator =
+  | "equals" | "not_equals" | "contains" | "not_contains" | "in_list"
+  | "is_empty" | "is_not_empty" | "is_direct_report_of" | "is_in_subtree_of";
+
+export type GroupMatchType = "all" | "any";
 
 export interface RuleInput {
   field: string;
@@ -39,6 +43,7 @@ export interface EmployeeGroup {
   id: number;
   name: string;
   description: string | null;
+  match_type: GroupMatchType;
   created_at: string;
   updated_at: string;
   rules: EmployeeGroupRule[];
@@ -49,6 +54,7 @@ export interface EmployeeGroupSummary {
   id: number;
   name: string;
   description: string | null;
+  match_type: GroupMatchType;
   member_count: number;
   rule_count: number;
 }
@@ -65,6 +71,19 @@ export interface PreviewResponse {
   sample: PreviewMember[];
 }
 
+export interface GroupMember {
+  id: number;
+  name: string;
+  email: string;
+  cpf: string | null;
+  designation: string | null;
+}
+
+export interface GroupMembersResponse {
+  total: number;
+  members: GroupMember[];
+}
+
 export interface CourseTargetGroup {
   id: number;
   group_id: number;
@@ -75,15 +94,17 @@ export interface CourseTargetGroup {
 export const employeeGroupsApi = {
   list: () => client.get<EmployeeGroupSummary[]>("/admin/employee-groups").then((r) => r.data),
   get: (id: number) => client.get<EmployeeGroup>(`/admin/employee-groups/${id}`).then((r) => r.data),
-  create: (data: { name: string; description?: string; rules: RuleInput[] }) =>
+  create: (data: { name: string; description?: string; match_type?: GroupMatchType; rules: RuleInput[] }) =>
     client.post<EmployeeGroup>("/admin/employee-groups", data).then((r) => r.data),
-  update: (id: number, data: { name?: string; description?: string }) =>
+  update: (id: number, data: { name?: string; description?: string; match_type?: GroupMatchType }) =>
     client.put<EmployeeGroup>(`/admin/employee-groups/${id}`, data).then((r) => r.data),
-  replaceRules: (id: number, rules: RuleInput[]) =>
-    client.put<EmployeeGroup>(`/admin/employee-groups/${id}/rules`, { rules }).then((r) => r.data),
+  replaceRules: (id: number, rules: RuleInput[], matchType: GroupMatchType) =>
+    client.put<EmployeeGroup>(`/admin/employee-groups/${id}/rules`, { rules, match_type: matchType }).then((r) => r.data),
   delete: (id: number) => client.delete(`/admin/employee-groups/${id}`),
-  preview: (rules: RuleInput[]) =>
-    client.post<PreviewResponse>("/admin/employee-groups/preview", { rules }).then((r) => r.data),
+  preview: (rules: RuleInput[], matchType: GroupMatchType = "all") =>
+    client.post<PreviewResponse>("/admin/employee-groups/preview", { rules, match_type: matchType }).then((r) => r.data),
+  members: (id: number) =>
+    client.get<GroupMembersResponse>(`/admin/employee-groups/${id}/members`).then((r) => r.data),
 
   // Course <-> group targeting
   listCourseTargets: (courseId: number) =>
@@ -124,6 +145,64 @@ export interface EndAllResponse {
   sessions_ended: number;
 }
 
+export interface HistoryParticipant {
+  user_id: number;
+  name: string;
+  email: string;
+  joined_at: string;
+  left_at: string | null;
+  duration_sec: number;
+  camera_on: boolean;
+  mic_on: boolean;
+  screen_sharing: boolean;
+}
+
+export interface SessionHistoryRow {
+  kind: "instant_room" | "live_session";
+  id: number;
+  room_name: string;
+  title: string;
+  owner_or_host_name: string;
+  status: string;
+  started_at: string | null;
+  ended_at: string | null;
+  participant_count: number;
+  screen_share_count: number;
+  max_concurrent: number;
+}
+
+export interface SessionHistoryDetail extends SessionHistoryRow {
+  participants: HistoryParticipant[];
+}
+
+export interface SessionHistoryPage {
+  items: SessionHistoryRow[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface ResourceUsageSample {
+  id: number;
+  sampled_at: string;
+  host_cpu_pct: number | null;
+  host_memory_pct: number | null;
+  host_memory_used_mb: number | null;
+  host_memory_total_mb: number | null;
+  livekit_cpu_pct: number | null;
+  livekit_memory_mb: number | null;
+  bandwidth_in_bytes_per_sec: number | null;
+  bandwidth_out_bytes_per_sec: number | null;
+  active_room_count: number | null;
+  active_participant_count: number | null;
+}
+
+export const resourceUsageApi = {
+  current: () => client.get<ResourceUsageSample>("/admin/resource-usage/current").then((r) => r.data),
+  history: (hours = 24) =>
+    client.get<{ samples: ResourceUsageSample[] }>("/admin/resource-usage/history", { params: { hours } }).then((r) => r.data.samples),
+};
+
 export const adminRoomsApi = {
   list: () => client.get<LiveRoomSummary[]>("/admin/rooms").then((r) => r.data),
   end: (kind: string, id: number) => client.post(`/admin/rooms/${kind}/${id}/end`),
@@ -132,6 +211,13 @@ export const adminRoomsApi = {
   broadcast: (kind: string, id: number, message: string) =>
     client.post(`/admin/rooms/${kind}/${id}/broadcast`, { message }),
   endAll: () => client.post<EndAllResponse>("/admin/rooms/end-all").then((r) => r.data),
+
+  history: (page = 1, pageSize = 20, kind: "" | "instant_room" | "live_session" = "") =>
+    client
+      .get<SessionHistoryPage>("/admin/rooms/history", { params: { page, page_size: pageSize, kind: kind || undefined } })
+      .then((r) => r.data),
+  historyDetail: (kind: string, id: number) =>
+    client.get<SessionHistoryDetail>(`/admin/rooms/history/${kind}/${id}`).then((r) => r.data),
 };
 
 // ── Disciplines ────────────────────────────────────────────────────────────────
@@ -380,10 +466,15 @@ export interface LiveSession {
 export interface SessionParticipant {
   id: number;
   user_id: number;
+  name: string;
+  email: string;
   role: "host" | "presenter" | "attendee";
   joined_at: string;
   left_at: string | null;
   duration_sec: number;
+  camera_on: boolean;
+  mic_on: boolean;
+  screen_sharing: boolean;
 }
 
 export type LiveSessionInput = {

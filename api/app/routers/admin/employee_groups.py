@@ -19,11 +19,12 @@ from app.models.user import User
 from app.schemas.employee_group import (
     EmployeeGroupCreate, EmployeeGroupUpdate, EmployeeGroupRead, EmployeeGroupSummary,
     PreviewRequest, PreviewResponse, PreviewMember,
+    GroupMember, GroupMembersResponse,
     CourseTargetGroupRead, CourseTargetGroupCreate,
 )
 from app.services.audit import audit
 from app.services.employee_groups import (
-    count_group_members, preview_group_members, InvalidRuleError,
+    count_group_members, preview_group_members, list_group_members, InvalidRuleError,
 )
 
 router = APIRouter(prefix="/admin/employee-groups", tags=["admin-employee-groups"])
@@ -47,7 +48,7 @@ def _to_read(db: Session, group: EmployeeGroup) -> EmployeeGroupRead:
     except InvalidRuleError:
         count = 0
     return EmployeeGroupRead(
-        id=group.id, name=group.name, description=group.description,
+        id=group.id, name=group.name, description=group.description, match_type=group.match_type,
         created_at=group.created_at, updated_at=group.updated_at,
         rules=list(group.rules), member_count=count,
     )
@@ -66,7 +67,7 @@ def list_groups(
         except InvalidRuleError:
             count = 0
         out.append(EmployeeGroupSummary(
-            id=g.id, name=g.name, description=g.description,
+            id=g.id, name=g.name, description=g.description, match_type=g.match_type,
             member_count=count, rule_count=len(g.rules),
         ))
     return out
@@ -79,7 +80,10 @@ def create_group(
     db: Session = Depends(get_db),
     actor: User = Depends(require_admin),
 ):
-    group = EmployeeGroup(name=body.name.strip(), description=body.description, created_by_id=actor.id)
+    group = EmployeeGroup(
+        name=body.name.strip(), description=body.description, match_type=body.match_type,
+        created_by_id=actor.id,
+    )
     db.add(group)
     db.flush()
     for r in body.rules:
@@ -112,6 +116,8 @@ def update_group(
         group.name = body.name.strip()
     if body.description is not None:
         group.description = body.description
+    if body.match_type is not None:
+        group.match_type = body.match_type
     db.flush()
     audit(db, actor_id=actor.id, action="update_employee_group", target_type="employee_group", target_id=group.id)
     db.commit()
@@ -145,6 +151,7 @@ def replace_rules(
     simplest correct semantics is "this is now the complete rule list."
     """
     group = _load_group(db, group_id)
+    group.match_type = body.match_type
     for r in list(group.rules):
         db.delete(r)
     db.flush()
@@ -152,7 +159,7 @@ def replace_rules(
         db.add(EmployeeGroupRule(group_id=group.id, field=r.field, operator=r.operator, value=r.value))
     db.flush()
     audit(db, actor_id=actor.id, action="update_employee_group_rules", target_type="employee_group",
-          target_id=group.id, detail={"rule_count": len(body.rules)})
+          target_id=group.id, detail={"rule_count": len(body.rules), "match_type": body.match_type.value})
     db.commit()
     return _to_read(db, _load_group(db, group.id))
 
@@ -170,13 +177,36 @@ def preview(
     """
     try:
         total, sample = preview_group_members(
-            db, [r.model_dump() for r in body.rules],
+            db, [r.model_dump() for r in body.rules], match_type=body.match_type,
         )
     except InvalidRuleError as e:
         raise HTTPException(status_code=422, detail=str(e))
     return PreviewResponse(
         total=total,
         sample=[PreviewMember(id=u.id, name=u.name, email=u.email, designation=u.designation) for u in sample],
+    )
+
+
+@router.get("/{group_id}/members", response_model=GroupMembersResponse)
+def view_group_members(
+    group_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+    """Full resolved membership for an already-saved group — the 'View
+    Members' page/modal, as opposed to the 5-name sample the builder shows
+    while a group's rules are still being edited (see /preview above)."""
+    group = _load_group(db, group_id)
+    try:
+        members = list_group_members(db, group)
+    except InvalidRuleError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    return GroupMembersResponse(
+        total=len(members),
+        members=[
+            GroupMember(id=u.id, name=u.name, email=u.email, cpf=u.cpf, designation=u.designation)
+            for u in members
+        ],
     )
 
 

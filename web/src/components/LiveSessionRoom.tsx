@@ -1,8 +1,10 @@
 import { useState, useEffect } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { LiveKitRoom, VideoConference } from "@livekit/components-react";
 import "@livekit/components-styles";
 import { employeeApi } from "../api/employee";
+import { getErrorMessage } from "../api/client";
+import { useAuth } from "../contexts/AuthContext";
 import AdminNoticeBanner from "./AdminNoticeBanner";
 
 function useCountdown(targetSeconds: number | null) {
@@ -65,9 +67,84 @@ const STATUS_ICON: Record<string, JSX.Element> = {
   ),
 };
 
+// Host-only: add/remove people from this session's audience, on the spot —
+// no need to ask an admin to edit the course's audience rules mid-call.
+// Shown on the pre-join panel (not inside the LiveKitRoom itself) since
+// managing who's invited is a separate concern from the call UI, and the
+// host may well do this before the session even starts.
+function HostParticipants({ liveSessionId }: { liveSessionId: number }) {
+  const qc = useQueryClient();
+  const [expanded, setExpanded] = useState(false);
+  const [cpf, setCpf] = useState("");
+  const [err, setErr] = useState("");
+  const key = ["session-participants", liveSessionId];
+
+  const { data: participants } = useQuery({
+    queryKey: key,
+    queryFn: () => employeeApi.listSessionParticipants(liveSessionId),
+    enabled: expanded,
+    refetchInterval: expanded ? 8000 : false,
+  });
+
+  const addMut = useMutation({
+    mutationFn: () => employeeApi.addSessionParticipantByCpf(liveSessionId, cpf.trim()),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: key }); setCpf(""); setErr(""); },
+    onError: (e) => setErr(getErrorMessage(e)),
+  });
+
+  const removeMut = useMutation({
+    mutationFn: (userId: number) => employeeApi.removeSessionParticipant(liveSessionId, userId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: key }),
+    onError: (e) => setErr(getErrorMessage(e)),
+  });
+
+  return (
+    <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--border)" }}>
+      <button className="btn-ghost" style={{ padding: "4px 10px", fontSize: 12 }} onClick={() => setExpanded((e) => !e)}>
+        {expanded ? "Hide participants" : "Manage participants"}
+      </button>
+
+      {expanded && (
+        <div style={{ marginTop: 10 }}>
+          <p style={{ fontSize: 11.5, color: "var(--text-muted)", marginBottom: 8 }}>
+            Add anyone by CPF, even outside this course's normal audience — they're enrolled automatically and emailed a link.
+          </p>
+          {err && <p className="error-msg" style={{ fontSize: 12, marginBottom: 8 }}>{err}</p>}
+          <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+            <input
+              value={cpf}
+              onChange={(e) => setCpf(e.target.value)}
+              placeholder="Add by CPF number…"
+              style={{ width: 180 }}
+              onKeyDown={(e) => e.key === "Enter" && cpf.trim() && addMut.mutate()}
+            />
+            <button className="btn-primary" style={{ padding: "4px 12px", fontSize: 12 }}
+              disabled={!cpf.trim() || addMut.isPending} onClick={() => addMut.mutate()}>
+              {addMut.isPending ? "Adding…" : "Add"}
+            </button>
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {participants?.map((p) => (
+              <span key={p.user_id} className="badge badge-gray" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                {p.name}
+                {p.currently_in_room && <span className="badge badge-green" style={{ fontSize: 9, padding: "1px 5px" }}>in room</span>}
+                <button onClick={() => removeMut.mutate(p.user_id)} style={{ background: "none", border: "none", color: "var(--danger)", padding: 0, cursor: "pointer" }} title="Remove">✕</button>
+              </span>
+            ))}
+            {participants?.length === 0 && (
+              <span style={{ fontSize: 12, color: "var(--text-muted)" }}>Nobody added individually — just the course's normal audience.</span>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function SessionJoinPanel({
   enrollmentId, sectionId, itemId,
 }: { enrollmentId: number; sectionId: number; itemId: number }) {
+  const { user } = useAuth();
   const [joined, setJoined] = useState<{ url: string; token: string } | null>(null);
 
   const { data: eligibility, refetch } = useQuery({
@@ -158,6 +235,10 @@ export default function SessionJoinPanel({
             <div style={{ color: "var(--danger)", fontSize: 12, marginTop: 8 }}>Could not join — please try again.</div>
           )}
         </div>
+
+        {user && session.host_user_id === user.id && (
+          <HostParticipants liveSessionId={session.id} />
+        )}
       </div>
     </div>
   );

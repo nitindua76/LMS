@@ -22,6 +22,8 @@ import TeamMemberCourses from "./pages/employee/TeamMemberCourses";
 import TeamMemberCourseDetail from "./pages/employee/TeamMemberCourseDetail";
 import Rooms from "./pages/employee/Rooms";
 import LiveSessionsDashboard from "./pages/admin/LiveSessionsDashboard";
+import SessionHistory from "./pages/admin/SessionHistory";
+import ResourceMonitor from "./pages/admin/ResourceMonitor";
 import JoinRoom from "./pages/JoinRoom";
 
 function RootRedirect() {
@@ -75,6 +77,8 @@ export default function App() {
           <Route path="employee-groups" element={<EmployeeGroups />} />
           <Route path="my-rooms" element={<Rooms />} />
           <Route path="rooms" element={<LiveSessionsDashboard />} />
+          <Route path="session-history" element={<SessionHistory />} />
+          <Route path="resource-monitor" element={<ResourceMonitor />} />
         </Route>
 
         <Route path="/my" element={

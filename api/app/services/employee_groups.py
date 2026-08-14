@@ -5,24 +5,29 @@ membership is NEVER materialized/cached. A group is just a saved filter over
 transfer or a brand-new SSO-provisioned hire is picked up automatically with
 no admin action and no batch job to keep in sync.
 
-Rules within one group are AND-ed (see EmployeeGroupRule's docstring for why
-zero rules matches nobody, not everybody). A course/room can target several
-groups; that's an OR across groups, handled the same additive way
+Rules within one group are combined per that group's match_type — AND
+("all", the default) or OR ("any") — see EmployeeGroupRule's docstring for
+why zero rules matches nobody either way, not everybody. A course/room can
+target several groups; that's always an OR across groups regardless of any
+single group's own match_type, handled the same additive way
 CourseTarget/CourseTargetUser already are in services/enrollment.py.
 """
 from typing import List, Optional
 
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, or_, not_
 from sqlalchemy.orm import Session, Query
 
 from app.models.user import User
-from app.models.employee_group import EmployeeGroup, EmployeeGroupRule, RuleOperator
+from app.models.employee_group import EmployeeGroup, EmployeeGroupRule, RuleOperator, GroupMatchType
 
 # Which User columns a rule is allowed to reference. Deliberately an
 # allowlist, not "any attribute the ORM has" — this is the boundary between
 # "safe filter target" and "arbitrary column admins could otherwise probe
 # via trial and error" (e.g. password_hash must never be reachable here).
 FIELD_MAP = {
+    "cpf": User.cpf,
+    "name": User.name,
+    "email": User.email,
     "discipline_id": User.discipline_id,
     "level_id": User.level_id,
     "posting": User.posting,
@@ -88,8 +93,9 @@ def _rule_condition(db: Session, rule: EmployeeGroupRule):
     # UI), but several FIELD_MAP columns are integers (discipline_id,
     # level_id, controller_id/l1_id/l2_id/ic_hrer_id) — Postgres won't
     # implicitly compare integer = varchar, so those need an explicit cast
-    # before building the condition. "contains" only makes sense for text
-    # columns; used against one of the integer ones it's a user/API error.
+    # before building the condition. "contains"/"not_contains" only make
+    # sense for text columns; used against one of the integer ones it's a
+    # user/API error.
     is_integer_field = rule.field in (
         "discipline_id", "level_id", "controller_id", "l1_id", "l2_id", "ic_hrer_id",
     )
@@ -102,12 +108,28 @@ def _rule_condition(db: Session, rule: EmployeeGroupRule):
         except ValueError:
             raise InvalidRuleError(f"'{rule.field}' requires a numeric value, got: {raw!r}")
 
+    if rule.operator == RuleOperator.is_empty:
+        # Integer columns have no "empty string" concept — NULL is the only
+        # meaningful "empty" there. Text columns treat NULL and '' the same.
+        if is_integer_field:
+            return column.is_(None)
+        return or_(column.is_(None), column == "")
+    if rule.operator == RuleOperator.is_not_empty:
+        if is_integer_field:
+            return column.isnot(None)
+        return and_(column.isnot(None), column != "")
     if rule.operator == RuleOperator.equals:
         return column == _cast(rule.value)
+    if rule.operator == RuleOperator.not_equals:
+        return or_(column.is_(None), column != _cast(rule.value))
     if rule.operator == RuleOperator.contains:
         if is_integer_field:
             raise InvalidRuleError(f"'contains' is not valid for numeric field '{rule.field}'")
         return column.ilike(f"%{rule.value}%")
+    if rule.operator == RuleOperator.not_contains:
+        if is_integer_field:
+            raise InvalidRuleError(f"'not_contains' is not valid for numeric field '{rule.field}'")
+        return or_(column.is_(None), not_(column.ilike(f"%{rule.value}%")))
     if rule.operator == RuleOperator.in_list:
         values = [v.strip() for v in rule.value.split(",") if v.strip()]
         if not values:
@@ -117,16 +139,18 @@ def _rule_condition(db: Session, rule: EmployeeGroupRule):
 
 
 def group_member_query(db: Session, group: EmployeeGroup) -> Query:
-    """Base query for every active user matching every one of this group's
-    rules. Callers add their own .filter()/.count()/.all() as needed."""
+    """Base query for every active user matching this group's rules,
+    combined per its match_type — 'all' (AND, default) or 'any' (OR).
+    Callers add their own .filter()/.count()/.all() as needed."""
     q = db.query(User).filter(User.active.is_(True))
     if not group.rules:
-        # No rules configured yet — deliberately matches nobody (see
-        # EmployeeGroupRule's docstring). Cheapest way to express that
-        # without a special case at every call site.
+        # No rules configured yet — deliberately matches nobody regardless
+        # of match_type (see EmployeeGroupRule's docstring). Cheapest way
+        # to express that without a special case at every call site.
         return q.filter(User.id == -1)
     conditions = [_rule_condition(db, rule) for rule in group.rules]
-    return q.filter(and_(*conditions))
+    combiner = or_ if group.match_type == GroupMatchType.any else and_
+    return q.filter(combiner(*conditions))
 
 
 def count_group_members(db: Session, group: EmployeeGroup) -> int:
@@ -137,7 +161,16 @@ def user_matches_group(db: Session, user: User, group: EmployeeGroup) -> bool:
     return group_member_query(db, group).filter(User.id == user.id).first() is not None
 
 
-def preview_group_members(db: Session, rules: List[dict], limit: int = 20) -> tuple[int, List[User]]:
+def list_group_members(db: Session, group: EmployeeGroup) -> List[User]:
+    """Full resolved member list for an already-saved group — what the
+    admin 'View Members' page shows (as opposed to preview_group_members'
+    5-name sample used while still editing a group's rules)."""
+    return group_member_query(db, group).order_by(User.name).all()
+
+
+def preview_group_members(
+    db: Session, rules: List[dict], match_type: GroupMatchType = GroupMatchType.all, limit: int = 20,
+) -> tuple[int, List[User]]:
     """
     Used by the admin builder UI before a group is saved — evaluates a
     candidate rule set (plain dicts: {field, operator, value} or
@@ -155,7 +188,8 @@ def preview_group_members(db: Session, rules: List[dict], limit: int = 20) -> tu
             field=r.get("field", ""), operator=RuleOperator(r["operator"]), value=r["value"],
         )
         conditions.append(_rule_condition(db, fake_rule))
-    q = q.filter(and_(*conditions))
+    combiner = or_ if match_type == GroupMatchType.any else and_
+    q = q.filter(combiner(*conditions))
 
     total = q.count()
     sample = q.order_by(User.name).limit(limit).all()

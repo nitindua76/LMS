@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { adminRoomsApi, LiveRoomSummary } from "../../api/admin";
 import { getErrorMessage } from "../../api/client";
+import { MediaStateIcon as Icon, CAMERA_ICON_PATH as CAMERA_ICON, MIC_ICON_PATH as MIC_ICON, SCREEN_ICON_PATH as SCREEN_ICON } from "../../components/MediaStateIcons";
 
 const KIND_LABEL: Record<string, string> = {
   instant_room: "Instant Room",
@@ -16,20 +17,6 @@ function formatDuration(startedAt: string | null): string {
   if (h > 0) return `${h}h ${m}m`;
   return `${m}m`;
 }
-
-function Icon({ path, active }: { path: string; active: boolean }) {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
-      stroke={active ? "var(--success)" : "var(--text-muted)"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-      style={{ opacity: active ? 1 : 0.4 }}>
-      <path d={path} />
-    </svg>
-  );
-}
-
-const CAMERA_ICON = "M23 7l-7 5 7 5V7zM1 5h15a2 2 0 012 2v10a2 2 0 01-2 2H1a2 2 0 01-2-2V7a2 2 0 012-2z";
-const MIC_ICON = "M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3zM19 10v2a7 7 0 01-14 0v-2M12 19v4M8 23h8";
-const SCREEN_ICON = "M3 4h18v12H3zM8 21h8M12 16v5";
 
 function RoomRow({ room }: { room: LiveRoomSummary }) {
   const qc = useQueryClient();

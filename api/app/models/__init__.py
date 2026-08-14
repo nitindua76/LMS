@@ -32,8 +32,9 @@ from .package import LearningPackage, ScormCmiData, PackageFormat, SequencingMod
 from .cmi5 import Cmi5Registration, Cmi5Session, LaunchMode, Cmi5SessionState
 from .xapi import XapiStatement
 from .system_setting import SystemSetting
-from .employee_group import EmployeeGroup, EmployeeGroupRule, CourseTargetGroup, RuleOperator
-from .instant_room import InstantRoom, InstantRoomMember, InstantRoomParticipant, RoomAdmitMode
+from .employee_group import EmployeeGroup, EmployeeGroupRule, CourseTargetGroup, RuleOperator, GroupMatchType
+from .instant_room import InstantRoom, InstantRoomMember, InstantRoomParticipant, InstantRoomGroupTarget, RoomAdmitMode
+from .resource_usage import ResourceUsageSample
 
 __all__ = [
     "Base",
@@ -64,6 +65,7 @@ __all__ = [
     "Cmi5Registration", "Cmi5Session", "LaunchMode", "Cmi5SessionState",
     "XapiStatement",
     "SystemSetting",
-    "EmployeeGroup", "EmployeeGroupRule", "CourseTargetGroup", "RuleOperator",
-    "InstantRoom", "InstantRoomMember", "InstantRoomParticipant", "RoomAdmitMode",
+    "EmployeeGroup", "EmployeeGroupRule", "CourseTargetGroup", "RuleOperator", "GroupMatchType",
+    "InstantRoom", "InstantRoomMember", "InstantRoomParticipant", "InstantRoomGroupTarget", "RoomAdmitMode",
+    "ResourceUsageSample",
 ]

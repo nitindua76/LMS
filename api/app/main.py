@@ -26,6 +26,7 @@ from app.routers.admin.settings import router as admin_settings_router
 from app.routers.admin.employee_groups import router as admin_employee_groups_router
 from app.routers.employee.rooms import router as employee_rooms_router
 from app.routers.admin.rooms import router as admin_rooms_router
+from app.routers.admin.resource_usage import router as admin_resource_usage_router
 
 app = FastAPI(
     title="LMS API",
@@ -126,22 +127,27 @@ app.include_router(admin_settings_router)
 app.include_router(admin_employee_groups_router)
 app.include_router(employee_rooms_router)
 app.include_router(admin_rooms_router)
+app.include_router(admin_resource_usage_router)
 
 
 @app.on_event("startup")
 def _start_background_jobs():
     from app.services.session_scheduler import start_scheduler as start_session_scheduler
     from app.services.enrollment_scheduler import start_scheduler as start_enrollment_scheduler
+    from app.services.resource_monitor import start_scheduler as start_resource_monitor
     start_session_scheduler()
     start_enrollment_scheduler()
+    start_resource_monitor()
 
 
 @app.on_event("shutdown")
 def _stop_background_jobs():
     from app.services.session_scheduler import shutdown_scheduler as stop_session_scheduler
     from app.services.enrollment_scheduler import shutdown_scheduler as stop_enrollment_scheduler
+    from app.services.resource_monitor import shutdown_scheduler as stop_resource_monitor
     stop_session_scheduler()
     stop_enrollment_scheduler()
+    stop_resource_monitor()
 
 
 @app.exception_handler(Exception)

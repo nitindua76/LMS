@@ -9,6 +9,8 @@ const NAV = [
   { to: "/admin/employees", label: "Employees" },
   { to: "/admin/employee-groups", label: "Employee Groups" },
   { to: "/admin/rooms", label: "Live Sessions" },
+  { to: "/admin/session-history", label: "Session History" },
+  { to: "/admin/resource-monitor", label: "Resource Monitor" },
   { to: "/admin/my-rooms", label: "My Discussion Rooms" },
   { to: "/admin/disciplines", label: "Disciplines" },
   { to: "/admin/levels", label: "Levels" },

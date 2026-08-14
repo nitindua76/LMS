@@ -36,6 +36,17 @@ rtc:
   # signaling WS URL sent to the browser — see docker-compose.yml's api
   # service). Must match what LIVEKIT_HOST resolves to.
   node_ip: 10.205.52.150
+# Exposes a Prometheus-format metrics endpoint on this port (GET /metrics)
+# — this is what api/app/services/resource_monitor.py polls to build the
+# admin Resource Monitor page's live bandwidth/CPU/room numbers. Plain
+# HTTP, no auth — deliberately NOT published to the host in
+# docker-compose.yml, only reachable from the api container over the
+# internal compose network (see that file's livekit service comment).
+# NOTE: the older flat `prometheus_port` key still works but logs a
+# deprecation warning on startup (confirmed against the real running
+# 1.13.3 server) — using the nested form instead.
+prometheus:
+  port: 6789
 redis:
   address: redis:6379
 keys:

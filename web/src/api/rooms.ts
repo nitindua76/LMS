@@ -8,6 +8,19 @@ export interface RoomMember {
   added_via_cpf: boolean;
 }
 
+export interface RoomGroupTarget {
+  id: number;
+  group_id: number;
+  group_name: string;
+  member_count: number;
+}
+
+export interface GroupSearchResult {
+  id: number;
+  name: string;
+  member_count: number;
+}
+
 export interface InstantRoom {
   id: number;
   owner_user_id: number;
@@ -19,6 +32,7 @@ export interface InstantRoom {
   active: boolean;
   created_at: string;
   members: RoomMember[];
+  group_targets: RoomGroupTarget[];
   is_owner: boolean;
   join_url: string;
 }
@@ -57,6 +71,18 @@ export const roomsApi = {
 
   removeMember: (roomId: number, memberId: number) =>
     client.delete(`/my/rooms/${roomId}/members/${memberId}`),
+
+  listGroupTargets: (roomId: number) =>
+    client.get<RoomGroupTarget[]>(`/my/rooms/${roomId}/group-targets`).then((r) => r.data),
+
+  addGroupTarget: (roomId: number, groupId: number) =>
+    client.post<RoomGroupTarget>(`/my/rooms/${roomId}/group-targets`, { group_id: groupId }).then((r) => r.data),
+
+  removeGroupTarget: (roomId: number, targetId: number) =>
+    client.delete(`/my/rooms/${roomId}/group-targets/${targetId}`),
+
+  searchGroups: (q: string) =>
+    client.get<GroupSearchResult[]>("/my/rooms/groups/search", { params: { q } }).then((r) => r.data),
 
   join: (roomId: number) => client.post<RoomJoinResponse>(`/my/rooms/${roomId}/join`).then((r) => r.data),
 

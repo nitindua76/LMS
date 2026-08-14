@@ -77,10 +77,15 @@ class ParticipantRead(BaseModel):
 
     id: int
     user_id: int
+    name: str
+    email: str
     role: SessionParticipantRole
     joined_at: datetime
     left_at: Optional[datetime] = None
     duration_sec: int
+    camera_on: bool
+    mic_on: bool
+    screen_sharing: bool
 
 
 class JoinEligibility(BaseModel):
@@ -96,3 +101,29 @@ class JoinResponse(BaseModel):
     room_name: str
     identity: str
     role: str
+
+
+class SessionParticipantAddByUser(BaseModel):
+    user_id: int
+
+
+class SessionParticipantAddByCpf(BaseModel):
+    cpf: str
+
+    @model_validator(mode="after")
+    def cpf_not_empty(self):
+        if not self.cpf.strip():
+            raise ValueError("cpf cannot be empty")
+        return self
+
+
+class SessionParticipantRead(BaseModel):
+    """One person with standing access to this session (via
+    SessionAudienceRule.user_id), not a live attendance row — this is the
+    host's "who's invited" list, separate from ParticipantRead's "who
+    actually attended and for how long" history."""
+    rule_id: int
+    user_id: int
+    name: str
+    email: str
+    currently_in_room: bool

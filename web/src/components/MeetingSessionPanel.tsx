@@ -5,6 +5,7 @@ import {
   LiveSessionInput, Discipline, Level, SessionParticipant,
 } from "../api/admin";
 import { getErrorMessage } from "../api/client";
+import { MediaStateIcon, CAMERA_ICON_PATH, MIC_ICON_PATH, SCREEN_ICON_PATH } from "./MediaStateIcons";
 
 const STATUS_BADGE: Record<string, string> = {
   scheduled: "badge-yellow", live: "badge-green", ended: "badge-gray", cancelled: "badge-red",
@@ -293,6 +294,10 @@ function Attendance({
   const avgMin = completedDurations.length
     ? Math.round(completedDurations.reduce((a, b) => a + b, 0) / completedDurations.length / 60)
     : 0;
+  // Screen-share is the one signal worth calling out separately in the
+  // summary line — "who presented" is usually the first thing an admin
+  // wants to know when skimming a past session's history.
+  const screenSharers = participants.filter((p) => p.screen_sharing);
 
   return (
     <div style={{ marginTop: 12 }}>
@@ -302,12 +307,20 @@ function Attendance({
       <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 6 }}>
         {isLive && <span className="badge badge-green" style={{ fontSize: 10, marginRight: 6 }}>{currentlyIn} in room now</span>}
         {totalJoined} total joined{avgMin > 0 && ` · avg ${avgMin}m`}
+        {screenSharers.length > 0 && ` · ${screenSharers.length} shared screen (${screenSharers.map((p) => p.name).join(", ")})`}
       </div>
       {participants.map((p) => (
-        <div key={p.id} style={{ fontSize: 12, display: "flex", gap: 8, padding: "2px 0" }}>
-          <span>User #{p.user_id}</span>
+        <div key={p.id} style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 8, padding: "3px 0" }}>
+          <span style={{ minWidth: 140 }}>{p.name}</span>
           <span className="badge badge-gray" style={{ fontSize: 10 }}>{p.role}</span>
-          <span style={{ color: "var(--text-muted)" }}>{Math.round(liveElapsedSec(p) / 60)}m attended</span>
+          <span style={{ color: "var(--text-muted)" }}>{Math.round(liveElapsedSec(p) / 60)} min. attended</span>
+          <span style={{ color: "var(--text-muted)", fontSize: 11 }}>
+            joined {new Date(p.joined_at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
+            {p.left_at && ` · left ${new Date(p.left_at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`}
+          </span>
+          <span title="Camera"><MediaStateIcon path={CAMERA_ICON_PATH} active={p.camera_on} /></span>
+          <span title="Microphone"><MediaStateIcon path={MIC_ICON_PATH} active={p.mic_on} /></span>
+          <span title="Screen share"><MediaStateIcon path={SCREEN_ICON_PATH} active={p.screen_sharing} /></span>
           {!p.left_at && <span className="badge badge-green" style={{ fontSize: 10 }}>in room</span>}
         </div>
       ))}

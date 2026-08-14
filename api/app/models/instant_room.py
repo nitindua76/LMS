@@ -58,6 +58,9 @@ class InstantRoom(Base):
     participants: Mapped[list["InstantRoomParticipant"]] = relationship(
         "InstantRoomParticipant", back_populates="room", cascade="all, delete-orphan"
     )
+    group_targets: Mapped[list["InstantRoomGroupTarget"]] = relationship(
+        "InstantRoomGroupTarget", back_populates="room", cascade="all, delete-orphan"
+    )
 
 
 class InstantRoomMember(Base):
@@ -96,8 +99,10 @@ class InstantRoomParticipant(Base):
     track_published/track_unpublished webhook events — see
     routers/webhooks/livekit.py) so the admin Live Sessions dashboard can
     show who's on camera/screen-sharing right now. LiveSessionParticipant
-    has no equivalent need for that today, and admit_state exists here only
-    because InstantRoom supports RoomAdmitMode.manual (a training session
+    (models/live_session.py) gained the same three columns later, for the
+    same reason — this comment originally said it hadn't, that's no longer
+    true. `admitted` stays InstantRoom-only, since it exists only because
+    InstantRoom supports RoomAdmitMode.manual (a training session
     LiveSession has no waiting-room concept at all — see
     LiveSession.waiting_room_enabled, which is a different, simpler bool).
     """
@@ -120,3 +125,33 @@ class InstantRoomParticipant(Base):
 
     room: Mapped["InstantRoom"] = relationship("InstantRoom", back_populates="participants")
     user: Mapped["User"] = relationship("User", foreign_keys=[user_id])  # type: ignore[name-defined]
+
+
+class InstantRoomGroupTarget(Base):
+    """
+    Targets a whole dynamic EmployeeGroup at an Instant Room — exactly the
+    same shape/semantics as CourseTargetGroup (models/employee_group.py):
+    additive on top of individually-added InstantRoomMember rows, resolved
+    LIVE at access-check time (see routers/employee/rooms.py's
+    _can_see_room), never materialized. Anyone currently matching ANY
+    targeted group can see/join the room, same "additive OR across groups"
+    principle used everywhere else a group can be attached to something.
+    """
+    __tablename__ = "instant_room_group_targets"
+    __table_args__ = (
+        UniqueConstraint("room_id", "group_id", name="uq_instant_room_group_target"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    room_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("instant_rooms.id", ondelete="CASCADE"), nullable=False
+    )
+    group_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("employee_groups.id", ondelete="CASCADE"), nullable=False
+    )
+    added_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    room: Mapped["InstantRoom"] = relationship("InstantRoom", back_populates="group_targets")
+    group: Mapped["EmployeeGroup"] = relationship("EmployeeGroup")  # type: ignore[name-defined]

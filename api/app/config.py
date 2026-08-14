@@ -81,9 +81,70 @@ class Settings(BaseSettings):
     ACCOUNT_MAX_ATTEMPTS: int = 10
     ACCOUNT_LOCKOUT_SECONDS: int = 900
 
+    # ── SSO / Employee API (see services/sso.py) ────────────────────────────
+    # These are the fallback/dev defaults only — an admin can override every
+    # one of these at runtime via the system_settings table (see
+    # services/settings_service.py) without a redeploy. Blank SSO_API_BASE_URL
+    # disables SSO login entirely (local-password accounts still work).
+    SSO_API_BASE_URL: str = ""
+    SSO_API_TIMEOUT_SECONDS: float = 8.0
+    # The chkCredential endpoint takes a `server` query param identifying
+    # which directory to check against — "AD" in every deployment seen so
+    # far, but exposed as a setting rather than hardcoded in case that ever
+    # changes.
+    SSO_SERVER: str = "AD"
+    EMPLOYEE_API_BASE_URL: str = ""
+    EMPLOYEE_API_KEY: str = ""
+    # Higher than SSO_API_TIMEOUT_SECONDS on purpose: this call now always
+    # runs as a background task (see services/sso.py's
+    # sync_employee_details_background), never inline during login, so a
+    # slow response here no longer costs the user anything — better to
+    # give this upstream (observed taking anywhere from ~300ms to 10s+ on
+    # this deployment) room to finish than time out and skip a sync that
+    # would otherwise have succeeded.
+    EMPLOYEE_API_TIMEOUT_SECONDS: float = 15.0
+    # Whether a successful SSO login schedules an Employee API profile sync
+    # at all. On by default — the sync itself always runs as a background
+    # task (see routers/auth.py + services/sso.py's
+    # sync_employee_details_background), never inline, so this flag is
+    # purely "sync or don't", not "block or don't block" login.
+    EMPLOYEE_SYNC_ON_LOGIN: bool = True
+    # Local email+password login stays available even when SSO is
+    # configured — deliberate break-glass path, see AuthProvider in
+    # models/user.py.
+    ENABLE_LOCAL_LOGIN_FALLBACK: bool = True
+
+    # ── Instant Rooms (see models/instant_room.py) ──────────────────────────
+    INSTANT_ROOMS_ENABLED: bool = True
+    # The browser-facing base URL for this app — used to build the
+    # shareable "join this room" link (copy-link button + auto-mail-on-
+    # invite). Never localhost, same reasoning as LIVEKIT_HOST: this has to
+    # be a hostname/IP a recipient's own browser can actually reach.
+    FRONTEND_URL: str = "http://lms.local:5173"
+
+    # ── Meeting-link auto-mail (see services/mail_api.py) ───────────────────
+    # The corporate mail API's full URL, with {mailid}, {link}, and {name}
+    # as literal placeholders substituted at send time: {mailid} becomes
+    # the ADDED MEMBER's own email (never the room owner's), {link} becomes
+    # the actual meeting join URL, {name} becomes the room's display name
+    # (e.g. "Daily standup") so the subject/body can identify which room
+    # the link is for. Defaults to the exact template ONGC's MailApi/mail
+    # endpoint documented — override via the admin Settings page if the
+    # deployment differs. Blank disables auto-mail entirely (copy-link
+    # still works either way).
+    MAIL_API_URL_TEMPLATE: str = (
+        "https://appserver1.ongc.co.in:8089/MailApi/mail"
+        "?mailid={mailid}&msg=LMS%20Automated%20Mail%20Service&subject={name}%20DISCUSSION%20LINK"
+        "&template=LMS_LINK&templateparams=templateBody::{link},,templateHeader::{name}%20DISCUSSION%20LINK"
+    )
+    MAIL_API_TIMEOUT_SECONDS: float = 8.0
+
     @property
     def cors_origins_list(self) -> List[str]:
-        return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
+        # CORS matching is exact-string (scheme + host + port), so a stray
+        # trailing slash here would silently make every preflight fail —
+        # normalize instead of trusting whatever ends up in .env.
+        return [o.strip().rstrip("/") for o in self.CORS_ORIGINS.split(",") if o.strip()]
 
     @property
     def access_token_expire_seconds(self) -> int:

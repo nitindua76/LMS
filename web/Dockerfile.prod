@@ -1,7 +1,18 @@
 # Multi-stage: build the static bundle, then serve it with nginx — dev's
 # Dockerfile runs `vite dev` (hot-reload, unoptimized, dev-only), which is
 # never appropriate to run in production.
+
 FROM node:20-alpine AS build
+
+# Build-time only — ARG, not ENV, so the proxy never ends up in the final
+# nginx-based stage (it doesn't COPY these forward, but keeping it scoped to
+# the build stage avoids any confusion/leakage regardless). CI (GitHub-hosted
+# runners) builds this without --build-arg, so these are empty there and npm
+# just uses its normal direct connection.
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+ARG NO_PROXY
+
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci

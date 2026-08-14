@@ -45,6 +45,12 @@ export default function EmployeeDetail() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["user", userId] }),
   });
 
+  const toggleRoomsMut = useMutation({
+    mutationFn: (can_create_rooms: boolean) => usersApi.update(userId, { can_create_rooms }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["user", userId] }),
+    onError: (e) => setErr(getErrorMessage(e)),
+  });
+
   const resetMut = useMutation({
     mutationFn: () => usersApi.resetPassword(userId, resetPw),
     onSuccess: () => { setResetMsg("Password reset. User must log in again."); setResetPw(""); },
@@ -134,6 +140,26 @@ export default function EmployeeDetail() {
               <tr><td style={{ color: "var(--text-muted)" }}>Discipline</td><td>{disciplines?.items.find(d => d.id === user.discipline_id)?.name ?? "—"}</td></tr>
               <tr><td style={{ color: "var(--text-muted)" }}>Level</td><td>{levels?.items.find(l => l.id === user.level_id)?.code ?? "—"}</td></tr>
               <tr><td style={{ color: "var(--text-muted)" }}>Joined</td><td style={{ fontSize: 12 }}>{new Date(user.created_at).toLocaleDateString()}</td></tr>
+              <tr>
+                <td style={{ color: "var(--text-muted)" }}>Instant Rooms</td>
+                <td>
+                  <span className={`badge ${user.can_create_rooms ? "badge-green" : "badge-red"}`} style={{ marginRight: 8 }}>
+                    {user.can_create_rooms ? "Can create rooms" : "Room creation revoked"}
+                  </span>
+                  <button
+                    className="btn-ghost"
+                    style={{ padding: "3px 10px", fontSize: 11.5 }}
+                    disabled={toggleRoomsMut.isPending}
+                    onClick={() => {
+                      const next = !user.can_create_rooms;
+                      if (!next && !confirm(`Revoke ${user.name}'s ability to create Instant Rooms? This does not end rooms they're already hosting.`)) return;
+                      toggleRoomsMut.mutate(next);
+                    }}
+                  >
+                    {user.can_create_rooms ? "Revoke" : "Restore"}
+                  </button>
+                </td>
+              </tr>
             </tbody>
           </table>
           </div>

@@ -8,7 +8,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.database import get_db
 from app.dependencies import require_admin, verify_csrf
-from app.models.user import User, UserRole
+from app.models.user import User, UserRole, AuthProvider
 from app.models.discipline import Discipline
 from app.models.level import Level
 from app.schemas.common import PaginatedResponse
@@ -90,6 +90,11 @@ def create_user(
         discipline_id=body.discipline_id,
         level_id=body.level_id,
         force_password_change=True,
+        # Explicit, not just relying on the model default — an
+        # admin-created account with a real password is always the
+        # break-glass local path, never SSO (see AuthProvider in
+        # models/user.py and the routing logic in routers/auth.py).
+        auth_provider=AuthProvider.local,
     )
     db.add(user)
     db.flush()
@@ -134,6 +139,12 @@ def update_user(
         user.active = body.active
         if not body.active:
             auth_svc.revoke_all_user_refresh_tokens(user.id, get_redis())
+    if body.can_create_rooms is not None:
+        # Revoking mid-call deliberately does not end any room they're
+        # already hosting — it only blocks future room creation. Ending an
+        # active room is a separate, explicit admin action (see
+        # admin/rooms.py's end/end-all endpoints).
+        user.can_create_rooms = body.can_create_rooms
     try:
         db.flush()
     except IntegrityError:

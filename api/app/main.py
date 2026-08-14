@@ -22,6 +22,10 @@ from app.routers.admin.analytics import router as analytics_router
 from app.routers.admin.sessions import router as admin_sessions_router
 from app.routers.employee.sessions import router as employee_sessions_router
 from app.routers.webhooks.livekit import router as livekit_webhook_router
+from app.routers.admin.settings import router as admin_settings_router
+from app.routers.admin.employee_groups import router as admin_employee_groups_router
+from app.routers.employee.rooms import router as employee_rooms_router
+from app.routers.admin.rooms import router as admin_rooms_router
 
 app = FastAPI(
     title="LMS API",
@@ -118,6 +122,10 @@ app.include_router(analytics_router)
 app.include_router(admin_sessions_router)
 app.include_router(employee_sessions_router)
 app.include_router(livekit_webhook_router)
+app.include_router(admin_settings_router)
+app.include_router(admin_employee_groups_router)
+app.include_router(employee_rooms_router)
+app.include_router(admin_rooms_router)
 
 
 @app.on_event("startup")

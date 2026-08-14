@@ -12,12 +12,17 @@ import NewEmployee from "./pages/admin/NewEmployee";
 import Courses from "./pages/admin/Courses";
 import CourseForm from "./pages/admin/CourseForm";
 import CourseDetail from "./pages/admin/CourseDetail";
+import Settings from "./pages/admin/Settings";
+import EmployeeGroups from "./pages/admin/EmployeeGroups";
 import MyCourses from "./pages/employee/MyCourses";
 import MyCourseDetail from "./pages/employee/MyCourseDetail";
 import SectionPlayer from "./pages/employee/SectionPlayer";
 import MyTeam from "./pages/employee/MyTeam";
 import TeamMemberCourses from "./pages/employee/TeamMemberCourses";
 import TeamMemberCourseDetail from "./pages/employee/TeamMemberCourseDetail";
+import Rooms from "./pages/employee/Rooms";
+import LiveSessionsDashboard from "./pages/admin/LiveSessionsDashboard";
+import JoinRoom from "./pages/JoinRoom";
 
 function RootRedirect() {
   const { user, loading } = useAuth();
@@ -38,12 +43,19 @@ function RequireRole({ role, children }: { role: "admin" | "employee"; children:
   return <>{children}</>;
 }
 
+
+
 export default function App() {
   return (
     <AuthProvider>
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/" element={<RootRedirect />} />
+
+        {/* Shareable meeting link — deliberately outside both role-gated
+            layout blocks below; works the same for an admin or an
+            employee opening the same link, unlike every other route. */}
+        <Route path="/join/:roomId" element={<JoinRoom />} />
 
         <Route path="/admin" element={
           <RequireRole role="admin"><AdminLayout /></RequireRole>
@@ -59,12 +71,17 @@ export default function App() {
           <Route path="courses/new" element={<CourseForm />} />
           <Route path="courses/:id" element={<CourseDetail />} />
           <Route path="courses/:id/edit" element={<CourseForm />} />
+          <Route path="settings" element={<Settings />} />
+          <Route path="employee-groups" element={<EmployeeGroups />} />
+          <Route path="my-rooms" element={<Rooms />} />
+          <Route path="rooms" element={<LiveSessionsDashboard />} />
         </Route>
 
         <Route path="/my" element={
           <RequireRole role="employee"><EmployeeLayout /></RequireRole>
         }>
           <Route path="courses" element={<MyCourses />} />
+          <Route path="rooms" element={<Rooms />} />
           <Route path="courses/:courseId" element={<MyCourseDetail />} />
           <Route
             path="courses/:courseId/enrollments/:enrollmentId/sections/:sectionId"

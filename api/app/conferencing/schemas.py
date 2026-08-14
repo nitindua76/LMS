@@ -41,13 +41,24 @@ class WebhookParticipant:
 
 
 @dataclass(frozen=True)
+class WebhookTrack:
+    """Which kind of media a track_published/track_unpublished event is
+    about — this is what lets the webhook adapter tell "camera turned off"
+    apart from "screen share ended" apart from "muted the mic"."""
+    source: str  # one of: camera, microphone, screen_share, screen_share_audio, unknown
+
+
+@dataclass(frozen=True)
 class WebhookEvent:
     """
     Normalized shape of the LiveKit webhook events this app cares about.
     `event` is one of: participant_joined, participant_left, room_started,
-    room_finished. Anything else is parsed but the caller may ignore it.
+    room_finished, track_published, track_unpublished. Anything else is
+    parsed but the caller may ignore it. `track` is only set for the two
+    track_* events.
     """
     event: str
     room_name: str
     participant: Optional[WebhookParticipant] = None
+    track: Optional[WebhookTrack] = None
     raw_event_id: str = field(default="")

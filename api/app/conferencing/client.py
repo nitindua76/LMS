@@ -74,3 +74,44 @@ class ConferencingClient:
             await client.room.remove_participant(
                 lk_api.RoomParticipantIdentity(room=room_name, identity=identity)
             )
+
+    async def update_participant_permissions(
+        self, room_name: str, identity: str, permissions: ParticipantPermissions,
+    ) -> None:
+        """
+        Live-updates an already-connected participant's grants — this is
+        what admitting someone from a manual-admit waiting state uses: they
+        joined with hidden/no-publish/no-subscribe permissions, and this
+        flips them to full access without a reconnect/new token.
+        """
+        async with lk_api.LiveKitAPI(self._url, self._api_key, self._api_secret) as client:
+            await client.room.update_participant(
+                lk_api.UpdateParticipantRequest(
+                    room=room_name,
+                    identity=identity,
+                    permission=lk_api.ParticipantPermission(
+                        can_publish=permissions.can_publish,
+                        can_subscribe=permissions.can_subscribe,
+                        can_publish_data=permissions.can_publish_data,
+                        hidden=permissions.hidden,
+                    ),
+                )
+            )
+
+    async def mute_track(self, room_name: str, identity: str, track_sid: str, muted: bool = True) -> None:
+        """Server-side forced mute — used by admin moderation ('this mic is
+        causing feedback'), not by the participant's own mute button (that
+        goes straight through the client SDK, no server round-trip needed)."""
+        async with lk_api.LiveKitAPI(self._url, self._api_key, self._api_secret) as client:
+            await client.room.mute_published_track(
+                lk_api.MuteRoomTrackRequest(room=room_name, identity=identity, track_sid=track_sid, muted=muted)
+            )
+
+    async def send_data(self, room_name: str, payload: bytes, topic: str = "") -> None:
+        """Broadcasts a data-channel message to every participant currently
+        in the room — used for the admin 'prominent message to attendees'
+        intervention (see routers/admin/rooms.py's broadcast endpoint)."""
+        async with lk_api.LiveKitAPI(self._url, self._api_key, self._api_secret) as client:
+            await client.room.send_data(
+                lk_api.SendDataRequest(room=room_name, data=payload, topic=topic)
+            )

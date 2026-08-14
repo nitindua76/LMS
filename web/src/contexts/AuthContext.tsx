@@ -4,7 +4,7 @@ import { authApi, Me } from "../api/auth";
 interface AuthCtx {
   user: Me | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  login: (identifier: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -22,8 +22,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       .finally(() => setLoading(false));
   }, []);
 
-  const login = useCallback(async (email: string, password: string) => {
-    const me = await authApi.login(email, password);
+  const login = useCallback(async (identifier: string, password: string) => {
+    const me = await authApi.login(identifier, password);
     setUser(me);
   }, []);
 

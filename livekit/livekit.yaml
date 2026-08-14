@@ -28,7 +28,14 @@ rtc:
   # a second device on the LAN instead requires this to be the host's real
   # LAN IP; a real deployment needs the node's public IP/hostname instead
   # (see the docker-compose.yml comments on the livekit service).
-  node_ip: 127.0.0.1
+  #
+  # Set to this host's LAN-reachable address so remote machines (not just a
+  # browser on this same host) can negotiate media. LiveKit reads this from
+  # a static file, not an env var, so if this host's IP/hostname changes,
+  # update it here too (and LIVEKIT_HOST in .env, which controls the
+  # signaling WS URL sent to the browser — see docker-compose.yml's api
+  # service). Must match what LIVEKIT_HOST resolves to.
+  node_ip: 10.205.52.150
 redis:
   address: redis:6379
 keys:

@@ -7,8 +7,12 @@ const NAV = [
   { to: "/admin/dashboard", label: "Dashboard" },
   { to: "/admin/courses", label: "Courses" },
   { to: "/admin/employees", label: "Employees" },
+  { to: "/admin/employee-groups", label: "Employee Groups" },
+  { to: "/admin/rooms", label: "Live Sessions" },
+  { to: "/admin/my-rooms", label: "My Discussion Rooms" },
   { to: "/admin/disciplines", label: "Disciplines" },
   { to: "/admin/levels", label: "Levels" },
+  { to: "/admin/settings", label: "Settings" },
 ];
 
 export default function AdminLayout() {

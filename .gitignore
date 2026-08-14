@@ -3,6 +3,9 @@
 .env.prod
 .env.local
 
+# TLS certificate/private key — never commit
+ssl/
+
 # Generated from templates at deploy time (contains real LiveKit keys)
 livekit/livekit.prod.yaml
 

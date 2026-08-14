@@ -50,12 +50,23 @@ services:
       - lms_content:/usr/share/nginx/html
       - ./content-origin/nginx.conf:/etc/nginx/conf.d/default.conf:ro
       - ./content-origin:/usr/share/nginx/html/static:ro
-    ports:
-      - "5174:80"
+    # No host port published here — the `nginx` TLS service (below) is the
+    # only entry point for this container now, terminating https:// on 5175
+    # and forwarding plain http internally. See nginx/nginx.conf.
+    expose:
+      - "80"
 
   lrs:
     image: python:3.11-slim
     working_dir: /app
+    # Unlike api/web, this service installs its deps at container *start*
+    # time (not build time), and only ever talks to PyPI (external) — never
+    # another compose service by hostname — so it's safe to set the proxy as
+    # a normal runtime env var here, unlike api/Dockerfile's build-only ARGs.
+    environment:
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1}
     command: >
       sh -c "pip install fastapi uvicorn --quiet --no-cache-dir && uvicorn main:app --host 0.0.0.0 --port 9090"
     volumes:
@@ -76,9 +87,15 @@ services:
     environment:
       LIVEKIT_KEYS: "${LIVEKIT_API_KEY:-devkey}: ${LIVEKIT_API_SECRET:-dev-livekit-secret-replace-in-production}"
     ports:
-      - "7880:7880"   # signaling / room service HTTP
-      - "7881:7881"   # RTC over TCP (fallback when UDP is blocked)
-      - "55000-55100:55000-55100/udp"
+      # 7880 (signaling) intentionally NOT published here — the `nginx` TLS
+      # service terminates wss:// on 7880 instead and forwards plain ws
+      # internally (see nginx/nginx.conf); browsers require a secure
+      # context for navigator.mediaDevices (camera/mic), so signaling must
+      # be wss://, not ws://.
+      - "7881:7881"   # RTC over TCP (fallback when UDP is blocked) — raw media, not proxied
+      - "55000-55100:55000-55100/udp"  # raw media — not proxied, TLS doesn't apply to it
+    expose:
+      - "7880"
     depends_on:
       redis:
         condition: service_healthy
@@ -101,26 +118,68 @@ services:
     build:
       context: ./api
       dockerfile: Dockerfile
+      args:
+        HTTP_PROXY: ${HTTP_PROXY:-}
+        HTTPS_PROXY: ${HTTPS_PROXY:-}
+        NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1}
     env_file:
       - .env
+    # Docker's default embedded DNS (127.0.0.11) here forwards to public
+    # resolvers (8.8.8.8/8.8.4.4), which have no record of internal-only
+    # ONGC hostnames like appserver1.ongc.co.in's SSO/Employee API — that
+    # only resolves through the corporate AD DNS server. Without this the
+    # container gets "Temporary failure in name resolution" on every SSO/
+    # Employee API call. Point it at the same internal DNS server(s) the
+    # host itself uses (see `ipconfig`/`Get-DnsClientServerAddress` on the
+    # host — adjust DNS_SERVER_1/2 in .env if this host's DNS servers ever
+    # change).
+    dns:
+      - ${DNS_SERVER_1:-10.205.55.247}
+      - ${DNS_SERVER_2:-10.205.55.252}
     environment:
+      # env_file above loads .env wholesale, which ALSO includes
+      # HTTP_PROXY/HTTPS_PROXY/NO_PROXY (needed at *build* time — see
+      # api/Dockerfile's ARGs). Without this override those leak into the
+      # running container too, and httpx then tries to route calls to
+      # appserver1.ongc.co.in (this very host, reachable directly on the
+      # internal network) through the corporate proxy — which rejects the
+      # tunnel (seen in practice: "403 Tunnel or SSL Forbidden"). Clearing
+      # them here restores the documented intent: this service never uses
+      # a proxy at runtime, only api/web's Dockerfiles do at build time.
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      NO_PROXY: ""
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-lms}:${POSTGRES_PASSWORD:-lmspassword}@db:5432/${POSTGRES_DB:-lms}
       REDIS_URL: redis://redis:6379/0
       MINIO_ENDPOINT: minio:9000
-      CONTENT_ORIGIN: http://content.local:5174
-      API_EXTERNAL_URL: http://lms.local:8000
+      # Read from .env (via env_file above) rather than hardcoded here —
+      # both now point at the nginx TLS service under one hostname. Don't
+      # hardcode these back; an inline `environment:` value here would
+      # silently override whatever's set in .env.
+      CONTENT_ORIGIN: ${CONTENT_ORIGIN}
+      API_EXTERNAL_URL: ${API_EXTERNAL_URL}
       SCORM_TOKEN_SECRET: ${SCORM_TOKEN_SECRET:-dev-scorm-secret}
       LRS_ENDPOINT: http://lrs:9090
       STORAGE_BACKEND: local
       STORAGE_LOCAL_PATH: /data/lms-content
-      LIVEKIT_URL: ws://localhost:7880
+      # The address the BROWSER connects to directly for LiveKit's signaling
+      # (wss:// via the nginx TLS service, required for navigator.mediaDevices
+      # to work at all) and, via published UDP/TCP ports, media — never
+      # localhost, since that resolves to whatever machine the browser itself
+      # runs on. Defaults to this host's DNS name/LAN IP via LIVEKIT_HOST in
+      # .env; set that to whatever hostname/IP remote machines can actually
+      # reach this host at (see livekit/livekit.yaml's node_ip comment for
+      # the matching media-negotiation setting).
+      LIVEKIT_URL: wss://${LIVEKIT_HOST:-localhost}:7880
       LIVEKIT_SERVER_URL: http://livekit:7880
       LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-devkey}
       LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-dev-livekit-secret-replace-in-production}
       SMTP_HOST: mailpit
       SMTP_PORT: 1025
-    ports:
-      - "8000:8000"
+    # No host port published here — the `nginx` TLS service terminates
+    # https:// on 8000 and forwards plain http internally. See nginx/nginx.conf.
+    expose:
+      - "8000"
     depends_on:
       db:
         condition: service_healthy
@@ -141,18 +200,53 @@ services:
     build:
       context: ./web
       dockerfile: Dockerfile
+      args:
+        HTTP_PROXY: ${HTTP_PROXY:-}
+        HTTPS_PROXY: ${HTTPS_PROXY:-}
+        NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1}
     env_file:
       - .env
     environment:
+      # See the api service's identical override above — env_file leaks
+      # the build-only proxy vars in otherwise; clear them here too.
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      NO_PROXY: ""
       VITE_API_URL: http://api:8000
-    ports:
-      - "5173:5173"
+      VITE_ALLOWED_HOSTS: ${VITE_ALLOWED_HOSTS:-}
+    # No host port published here — the `nginx` TLS service terminates
+    # https:// on 5173 and forwards plain http/ws (HMR) internally. See
+    # nginx/nginx.conf.
+    expose:
+      - "5173"
     depends_on:
       - api
     volumes:
       - ./web:/app
       - /app/node_modules
     command: npm run dev -- --host 0.0.0.0
+
+  # Terminates TLS for web/api/content/livekit-signaling under one hostname
+  # (appserver1.ongc.co.in) using the *.ongc.co.in cert in ./ssl — needed
+  # because navigator.mediaDevices (camera/mic for live sessions) only works
+  # in a secure context. See nginx/nginx.conf for the per-port routing and
+  # why this collapses the SCORM content origin onto the same hostname
+  # (accepted tradeoff — no second DNS name available for this host).
+  nginx:
+    image: nginx:alpine
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    ports:
+      - "5173:5173"
+      - "8000:8000"
+      - "5175:5175"
+      - "7880:7880"
+    depends_on:
+      - web
+      - api
+      - content
+      - livekit
 
 volumes:
   postgres_data:

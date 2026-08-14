@@ -30,6 +30,33 @@ export default function EmployeeLayout() {
     navigate("/login");
   };
 
+  const initials = (user?.name || "")
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("");
+
+  const THEME_ICONS: Record<"light" | "dark" | "mixed", JSX.Element> = {
+    light: (
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+        <circle cx="12" cy="12" r="4" />
+        <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
+      </svg>
+    ),
+    dark: (
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+        <path d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 1020.354 15.354z" />
+      </svg>
+    ),
+    mixed: (
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+        <path d="M12 3a9 9 0 000 18 9 9 0 000-18z" fill="currentColor" fillOpacity="0.35" />
+        <path d="M12 3v18M12 3a9 9 0 010 18" />
+      </svg>
+    ),
+  };
+
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
       <header className="mobile-topbar">
@@ -55,10 +82,13 @@ export default function EmployeeLayout() {
             borderBottom: "1px solid var(--sidebar-border)",
             marginBottom: 16,
           }}>
-            <div>
-              <div style={{ fontWeight: 700, fontSize: 15, color: "var(--sidebar-text)", letterSpacing: "-0.01em" }}>LMS</div>
-              <div style={{ fontSize: 11, color: "var(--sidebar-text-muted)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 160 }} title={user?.name || ""}>
-                {user?.name}
+            <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+              {initials && <div className="sidebar-avatar">{initials}</div>}
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontWeight: 700, fontSize: 15, color: "var(--sidebar-text)", letterSpacing: "-0.01em" }}>LMS</div>
+                <div style={{ fontSize: 11, color: "var(--sidebar-text-muted)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 140 }} title={user?.name || ""}>
+                  {user?.name}
+                </div>
               </div>
             </div>
             <button className="sidebar-close" onClick={() => setSidebarOpen(false)} aria-label="Close menu">
@@ -82,6 +112,28 @@ export default function EmployeeLayout() {
               })}
             >
               My Courses
+            </NavLink>
+            <NavLink
+              to="/my/rooms"
+              style={({ isActive }) => ({
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "8px 16px",
+                margin: "2px 12px",
+                borderRadius: "6px",
+                color: isActive ? "var(--sidebar-item-active-text)" : "var(--sidebar-text-muted)",
+                background: isActive ? "var(--sidebar-item-active-bg)" : "transparent",
+                fontSize: "13.5px",
+                fontWeight: isActive ? 600 : 500,
+                transition: "all 0.15s ease",
+              })}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M23 7l-7 5 7 5V7z" />
+                <rect x="1" y="5" width="15" height="14" rx="2" />
+              </svg>
+              My Discussion Rooms
             </NavLink>
             {hasReports && (
               <NavLink
@@ -119,21 +171,22 @@ export default function EmployeeLayout() {
                   onClick={() => setTheme(t)}
                   style={{
                     flex: 1,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
                     background: theme === t ? "var(--bg-surface)" : "transparent",
                     color: theme === t ? "var(--text)" : "var(--text-muted)",
                     border: "none",
-                    padding: "4px 0",
-                    fontSize: 10,
+                    padding: "5px 0",
                     borderRadius: 4,
-                    fontWeight: theme === t ? 600 : 400,
                     cursor: "pointer",
-                    textAlign: "center",
                     transition: "all 0.15s",
                     boxShadow: "none",
                   }}
                   title={`${t.charAt(0).toUpperCase() + t.slice(1)} Theme`}
+                  aria-label={`${t.charAt(0).toUpperCase() + t.slice(1)} theme`}
                 >
-                  {t === "light" ? "☀️" : t === "dark" ? "🌙" : "🌗"}
+                  {THEME_ICONS[t]}
                 </button>
               ))}
             </div>
@@ -146,10 +199,9 @@ export default function EmployeeLayout() {
         {/* Floating Sidebar Toggle Button (Desktop only) */}
         <button
           onClick={toggleCollapse}
-          className="sidebar-toggle-btn"
+          className={`sidebar-toggle-btn${isCollapsed ? " is-collapsed" : ""}`}
           style={{
             position: "absolute",
-            left: isCollapsed ? "12px" : "228px",
             top: "20px",
             zIndex: 1000,
             width: "24px",

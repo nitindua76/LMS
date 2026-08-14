@@ -1,7 +1,7 @@
 from .base import Base
 from .discipline import Discipline
 from .level import Level
-from .user import User, UserRole
+from .user import User, UserRole, AuthProvider
 from .course import (
     Course, CourseStatus,
     CourseTarget,
@@ -31,12 +31,15 @@ from .controller_history import ControllerAssignmentHistory, ControllerAssignmen
 from .package import LearningPackage, ScormCmiData, PackageFormat, SequencingMode, MoveOn
 from .cmi5 import Cmi5Registration, Cmi5Session, LaunchMode, Cmi5SessionState
 from .xapi import XapiStatement
+from .system_setting import SystemSetting
+from .employee_group import EmployeeGroup, EmployeeGroupRule, CourseTargetGroup, RuleOperator
+from .instant_room import InstantRoom, InstantRoomMember, InstantRoomParticipant, RoomAdmitMode
 
 __all__ = [
     "Base",
     "Discipline",
     "Level",
-    "User", "UserRole",
+    "User", "UserRole", "AuthProvider",
     "Course", "CourseStatus",
     "CourseTarget",
     "CourseTargetUser",
@@ -60,4 +63,7 @@ __all__ = [
     "LearningPackage", "ScormCmiData", "PackageFormat", "SequencingMode", "MoveOn",
     "Cmi5Registration", "Cmi5Session", "LaunchMode", "Cmi5SessionState",
     "XapiStatement",
+    "SystemSetting",
+    "EmployeeGroup", "EmployeeGroupRule", "CourseTargetGroup", "RuleOperator",
+    "InstantRoom", "InstantRoomMember", "InstantRoomParticipant", "RoomAdmitMode",
 ]

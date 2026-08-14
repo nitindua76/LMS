@@ -37,6 +37,7 @@ class UserUpdate(BaseModel):
     discipline_id: Optional[int] = None
     level_id: Optional[int] = None
     active: Optional[bool] = None
+    can_create_rooms: Optional[bool] = None
 
 
 class UserResetPassword(BaseModel):
@@ -62,6 +63,8 @@ class UserRead(BaseModel):
     discipline_id: Optional[int] = None
     level_id: Optional[int] = None
     controller_id: Optional[int] = None
+    cpf: Optional[str] = None
+    can_create_rooms: bool
     discipline: Optional[DisciplineRead] = None
     level: Optional[LevelRead] = None
     created_at: datetime
@@ -78,6 +81,7 @@ class UserSummary(BaseModel):
     active: bool
     discipline_id: Optional[int] = None
     level_id: Optional[int] = None
+    can_create_rooms: bool
     created_at: datetime
 
 

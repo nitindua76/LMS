@@ -9,6 +9,7 @@ import {
 import { getErrorMessage } from "../../api/client";
 import MeetingSessionPanel from "../../components/MeetingSessionPanel";
 import IndividualEmployeeTargets from "../../components/admin/IndividualEmployeeTargets";
+import GroupTargets from "../../components/admin/GroupTargets";
 
 const STATUS_BADGE: Record<string, string> = {
   draft: "badge-yellow", published: "badge-green", archived: "badge-gray",
@@ -532,6 +533,7 @@ export default function CourseDetail() {
       )}
 
       {tab === "publish" && <IndividualEmployeeTargets courseId={courseId} />}
+      {tab === "publish" && <GroupTargets courseId={courseId} />}
 
       {/* Sections */}
       {tab === "content" && (

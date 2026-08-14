@@ -162,7 +162,10 @@ class LocalBackend(StorageBackend):
         from app.config import settings
         exp = int(time.time()) + expires
         token = jwt.encode({"key": key, "exp": exp}, settings.JWT_SECRET, algorithm="HS256")
-        return f"http://localhost:8000/api/content/download?token={token}"
+        # API_EXTERNAL_URL, not a hardcoded localhost — this URL goes straight
+        # to the browser (video src=, etc.), so it must be reachable from
+        # wherever the browser actually is, not just this container's host.
+        return f"{settings.API_EXTERNAL_URL}/api/content/download?token={token}"
 
     def list_keys(self, prefix: str) -> list[str]:
         root = self._root

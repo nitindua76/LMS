@@ -7,6 +7,133 @@ export interface Paginated<T> {
   page_size: number;
 }
 
+// ── Settings (SSO/Employee API config, Instant Rooms kill switch) ───────────────
+export interface SystemSetting {
+  key: string;
+  value: string;
+  is_bool: boolean;
+  is_secret: boolean;
+  is_set: boolean;
+}
+
+export const settingsApi = {
+  list: () => client.get<SystemSetting[]>("/admin/settings").then((r) => r.data),
+  update: (key: string, value: string) =>
+    client.put<SystemSetting>(`/admin/settings/${key}`, { value }).then((r) => r.data),
+};
+
+// ── Employee Groups (dynamic, rule-based) ────────────────────────────────────
+export type RuleOperator = "equals" | "contains" | "in_list" | "is_direct_report_of" | "is_in_subtree_of";
+
+export interface RuleInput {
+  field: string;
+  operator: RuleOperator;
+  value: string;
+}
+
+export interface EmployeeGroupRule extends RuleInput {
+  id: number;
+}
+
+export interface EmployeeGroup {
+  id: number;
+  name: string;
+  description: string | null;
+  created_at: string;
+  updated_at: string;
+  rules: EmployeeGroupRule[];
+  member_count: number;
+}
+
+export interface EmployeeGroupSummary {
+  id: number;
+  name: string;
+  description: string | null;
+  member_count: number;
+  rule_count: number;
+}
+
+export interface PreviewMember {
+  id: number;
+  name: string;
+  email: string;
+  designation: string | null;
+}
+
+export interface PreviewResponse {
+  total: number;
+  sample: PreviewMember[];
+}
+
+export interface CourseTargetGroup {
+  id: number;
+  group_id: number;
+  group_name: string;
+  member_count: number;
+}
+
+export const employeeGroupsApi = {
+  list: () => client.get<EmployeeGroupSummary[]>("/admin/employee-groups").then((r) => r.data),
+  get: (id: number) => client.get<EmployeeGroup>(`/admin/employee-groups/${id}`).then((r) => r.data),
+  create: (data: { name: string; description?: string; rules: RuleInput[] }) =>
+    client.post<EmployeeGroup>("/admin/employee-groups", data).then((r) => r.data),
+  update: (id: number, data: { name?: string; description?: string }) =>
+    client.put<EmployeeGroup>(`/admin/employee-groups/${id}`, data).then((r) => r.data),
+  replaceRules: (id: number, rules: RuleInput[]) =>
+    client.put<EmployeeGroup>(`/admin/employee-groups/${id}/rules`, { rules }).then((r) => r.data),
+  delete: (id: number) => client.delete(`/admin/employee-groups/${id}`),
+  preview: (rules: RuleInput[]) =>
+    client.post<PreviewResponse>("/admin/employee-groups/preview", { rules }).then((r) => r.data),
+
+  // Course <-> group targeting
+  listCourseTargets: (courseId: number) =>
+    client.get<CourseTargetGroup[]>(`/admin/employee-groups/course-targets/${courseId}`).then((r) => r.data),
+  addCourseTarget: (courseId: number, groupId: number) =>
+    client.post<CourseTargetGroup>(`/admin/employee-groups/course-targets/${courseId}`, { group_id: groupId }).then((r) => r.data),
+  removeCourseTarget: (courseId: number, targetGroupId: number) =>
+    client.delete(`/admin/employee-groups/course-targets/${courseId}/${targetGroupId}`),
+};
+
+// ── Admin Live Sessions dashboard (Instant Rooms + live LiveSessions) ───────
+export interface LiveParticipant {
+  user_id: number;
+  name: string;
+  email: string;
+  joined_at: string;
+  camera_on: boolean;
+  mic_on: boolean;
+  screen_sharing: boolean;
+  admitted: boolean;
+}
+
+export interface LiveRoomSummary {
+  kind: "instant_room" | "live_session";
+  id: number;
+  room_name: string;
+  title: string;
+  owner_or_host_name: string;
+  participant_count: number;
+  camera_count: number;
+  screen_share_count: number;
+  started_at: string | null;
+  participants: LiveParticipant[];
+}
+
+export interface EndAllResponse {
+  rooms_ended: number;
+  sessions_ended: number;
+}
+
+export const adminRoomsApi = {
+  list: () => client.get<LiveRoomSummary[]>("/admin/rooms").then((r) => r.data),
+  end: (kind: string, id: number) => client.post(`/admin/rooms/${kind}/${id}/end`),
+  removeParticipant: (kind: string, id: number, userId: number) =>
+    client.post(`/admin/rooms/${kind}/${id}/remove/${userId}`),
+  broadcast: (kind: string, id: number, message: string) =>
+    client.post(`/admin/rooms/${kind}/${id}/broadcast`, { message }),
+  endAll: () => client.post<EndAllResponse>("/admin/rooms/end-all").then((r) => r.data),
+};
+
 // ── Disciplines ────────────────────────────────────────────────────────────────
 export interface Discipline {
   id: number;
@@ -46,11 +173,13 @@ export interface User {
   id: number;
   name: string;
   email: string;
+  cpf: string | null;
   role: "admin" | "employee";
   active: boolean;
   force_password_change: boolean;
   discipline_id: number | null;
   level_id: number | null;
+  can_create_rooms: boolean;
   created_at: string;
   updated_at: string;
 }

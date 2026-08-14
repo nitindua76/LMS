@@ -1,0 +1,49 @@
+POSTGRES_USER=lms
+POSTGRES_PASSWORD=lmspassword
+POSTGRES_DB=lms
+
+REDIS_URL=redis://redis:6379/0
+
+JWT_SECRET=dev-only-secret-replace-in-production-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+JWT_ACCESS_TOKEN_EXPIRE_MINUTES=15
+JWT_REFRESH_TOKEN_EXPIRE_DAYS=7
+
+COOKIE_SECURE=false
+COOKIE_SAMESITE=lax
+COOKIE_DOMAIN=
+
+# Only the main LMS frontend goes here — the content origin must NOT be in this list
+# because it would allow session-cookie-bearing requests from package JS.
+# lms.local and content.local are DIFFERENT registrable domains (different eTLD+1), so
+# SameSite=Lax prevents cookies on lms.local from reaching content.local at all.
+CORS_ORIGINS=http://lms.local:5173
+
+ENVIRONMENT=development
+LOGIN_MAX_ATTEMPTS_PER_IP=20
+LOGIN_WINDOW_SECONDS=300
+ACCOUNT_MAX_ATTEMPTS=10
+ACCOUNT_LOCKOUT_SECONDS=900
+
+# Used by the Vite dev server proxy (Node.js side, not the browser).
+VITE_API_URL=http://localhost:8000
+
+# MinIO / Object Storage
+MINIO_ENDPOINT=minio:9000
+MINIO_ACCESS_KEY=lmsadmin
+MINIO_SECRET_KEY=lmspassword
+MINIO_BUCKET=lms-packages
+MINIO_SECURE=false
+CONTENT_ORIGIN=http://content.local:5174
+
+# The URL the browser uses to reach the API directly (not via Vite proxy).
+# Used in SCORM/cmi5 launch URLs embedded in loader.html at the content origin.
+API_EXTERNAL_URL=http://lms.local:8000
+
+# LRS (xAPI) - mock LRS runs at localhost:9090 via docker-compose
+# Set to empty string to disable forwarding in dev without Docker
+LRS_ENDPOINT=http://localhost:9090
+LRS_USERNAME=
+LRS_PASSWORD=
+
+# SCORM session token secret
+SCORM_TOKEN_SECRET=dev-scorm-secret-replace-in-production

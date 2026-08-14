@@ -9,7 +9,7 @@ app/routers/webhooks/livekit.py, which call into this package rather than
 the other way around. Keeping the boundary one-directional is what lets
 this package be lifted into its own service later without a rewrite.
 """
-from .schemas import ParticipantPermissions, ParticipantToken, RoomInfo
+from .schemas import ParticipantPermissions, ParticipantToken, RoomInfo, WebhookTrack
 from .client import ConferencingClient
 from .webhooks import verify_and_parse_webhook, WebhookEvent
 
@@ -17,6 +17,7 @@ __all__ = [
     "ParticipantPermissions",
     "ParticipantToken",
     "RoomInfo",
+    "WebhookTrack",
     "ConferencingClient",
     "verify_and_parse_webhook",
     "WebhookEvent",

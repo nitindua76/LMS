@@ -8,20 +8,24 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models.course import Course, CourseTarget, CourseTargetUser, CourseStatus, Section, ContentItem
+from app.models.employee_group import CourseTargetGroup, EmployeeGroup
 from app.models.enrollment import Enrollment, EnrollmentStatus
 from app.models.live_session import LiveSession, SessionAudienceRule
 from app.models.user import User
 from app.schemas.enrollment import CourseState
+from app.services.employee_groups import user_matches_group
 
 
 def get_assigned_courses(db: Session, user: User) -> List[Course]:
     """
     Return published courses whose targets match the user's discipline+level,
     plus any course the user is individually added to via CourseTargetUser
-    (models/course.py), plus any course where the user is specifically
-    invited to a live session via SessionAudienceRule — even if their own
-    discipline/level isn't part of the course's normal CourseTarget audience
-    (see models/live_session.py).
+    (models/course.py), plus any course targeted at a dynamic EmployeeGroup
+    the user currently matches (models/employee_group.py — resolved live,
+    never from a cached membership list), plus any course where the user is
+    specifically invited to a live session via SessionAudienceRule — even if
+    their own discipline/level isn't part of the course's normal
+    CourseTarget audience (see models/live_session.py).
     """
     course_ids: set[int] = set()
 
@@ -40,6 +44,20 @@ def get_assigned_courses(db: Session, user: User) -> List[Course]:
             .all()
         )
         course_ids.update(t.course_id for t in targets)
+
+    # Group targeting — each CourseTargetGroup row names a group; the user
+    # is in scope for that course if they currently match that group's
+    # rules. Evaluated per-group (not one giant query) since each group's
+    # rule set is independent AND-of-conditions — cheap at the scale this
+    # runs at (one row per course per targeted group, not per employee).
+    group_targets = (
+        db.query(CourseTargetGroup)
+        .join(EmployeeGroup, EmployeeGroup.id == CourseTargetGroup.group_id)
+        .all()
+    )
+    for ctg in group_targets:
+        if user_matches_group(db, user, ctg.group):
+            course_ids.add(ctg.course_id)
 
     rule_conditions = [SessionAudienceRule.user_id == user.id]
     if user.discipline_id is not None:

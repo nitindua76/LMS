@@ -104,6 +104,14 @@ export default function SectionPlayer() {
   const successStatus = activeScoProgress?.success_status;
   const videoRef = useRef<HTMLVideoElement>(null);
   const resumedItemIdRef = useRef<number | null>(null);
+  // Furthest real playback position reached so far for the current video
+  // item — used to snap forward-seeks back (see onSeeking below). This is a
+  // UX deterrent only, not the security boundary: anyone with devtools open
+  // can still set video.currentTime directly. The actual anti-spoof bound
+  // lives server-side in content_progress.record_heartbeat, which caps how
+  // fast watched-time credit can accumulate regardless of what the client
+  // reports or how the scrub bar was used to get there.
+  const maxPlayedSecondsRef = useRef(0);
   const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pdfTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -198,6 +206,13 @@ export default function SectionPlayer() {
     return () => {
       if (heartbeatRef.current) clearInterval(heartbeatRef.current);
     };
+  }, [item?.id]);
+
+  // Reset the forward-seek guard whenever the active content item changes,
+  // so switching to a different video doesn't inherit the previous item's
+  // furthest-watched position.
+  useEffect(() => {
+    maxPlayedSecondsRef.current = 0;
   }, [item?.id]);
 
   // PDF DWELL TIMER
@@ -597,6 +612,7 @@ export default function SectionPlayer() {
                   ref={videoRef}
                   src={iframeUrl || item.url}
                   controls
+                  controlsList="noplaybackrate"
                   onLoadedMetadata={(e) => {
                     // Resume from where the employee left off, once per item —
                     // don't re-seek on later metadata events (e.g. after the
@@ -608,6 +624,30 @@ export default function SectionPlayer() {
                     if (resumeAt > 0 && resumeAt < video.duration) {
                       video.currentTime = resumeAt;
                     }
+                    // Seed the furthest-watched anchor to the resume point so
+                    // the resume-seek above isn't immediately snapped back by
+                    // onSeeking below.
+                    maxPlayedSecondsRef.current = video.currentTime;
+                  }}
+                  onTimeUpdate={(e) => {
+                    // Track real playback progress (not seeks) as the
+                    // furthest point reached, so forward-seeking past it can
+                    // be blocked below. This is a UX deterrent, not the real
+                    // enforcement — see the note on maxPlayedSecondsRef.
+                    const video = e.currentTarget;
+                    if (!video.seeking && video.currentTime > maxPlayedSecondsRef.current) {
+                      maxPlayedSecondsRef.current = video.currentTime;
+                    }
+                  }}
+                  onSeeking={(e) => {
+                    // Allow rewinding freely (review/re-watch), but snap
+                    // forward-seeks back to the furthest position actually
+                    // played so far. Small tolerance (2s) avoids fighting the
+                    // browser's own seek granularity.
+                    const video = e.currentTarget;
+                    if (video.currentTime > maxPlayedSecondsRef.current + 2) {
+                      video.currentTime = maxPlayedSecondsRef.current;
+                    }
                   }}
                   onPause={() => sendHeartbeatRef.current()}
                   onEnded={() => sendHeartbeatRef.current()}
@@ -615,7 +655,7 @@ export default function SectionPlayer() {
                 />
               </div>
               <p style={{ marginTop: 12, fontSize: 13, color: "var(--text-muted)", flexShrink: 0 }}>
-                Watch at least 90% of the video to continue.
+                Watch at least 90% of the video to continue. Skipping ahead is disabled — you can rewind, but forward-seeking past what you've watched is blocked.
                 {!!item.resume_seconds && item.resume_seconds > 0 && (
                   <> Resuming from {Math.floor(item.resume_seconds / 60)}:{String(item.resume_seconds % 60).padStart(2, "0")}.</>
                 )}

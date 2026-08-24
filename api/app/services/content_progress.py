@@ -23,7 +23,25 @@ from app.models.enrollment import ContentProgress, Enrollment
 # absorb client-server clock drift and network latency. Generous enough to
 # not annoy real users, tight enough that "one POST claiming 999999 seconds
 # watched" gets clamped to something plausible instead of accepted outright.
-_GRACE_SECONDS = 15
+#
+# IMPORTANT: this grace is per ACCEPTED heartbeat, not per request. Without
+# _MIN_INTERVAL_SECONDS below, a client firing heartbeats faster than real
+# time elapses (e.g. rapid seek-forward/pause cycling, or a scripted POST
+# loop hitting this endpoint directly) could accumulate +_GRACE_SECONDS of
+# credit on every single call regardless of how little wall-clock time had
+# actually passed — effectively an unbounded "free seconds" exploit that
+# defeats the mandatory-video-completion gate. Found via testing: rapidly
+# drag-seeking a native <video> scrub bar and pausing after each drag
+# cleared a multi-minute video's 90% threshold in a few real seconds.
+_GRACE_SECONDS = 5
+
+# Heartbeats arriving less than this many real seconds apart are ignored for
+# credit purposes (still update last_heartbeat_at's bookkeeping accuracy is
+# unaffected either way since we don't move the anchor when we bail early).
+# This is what actually closes the exploit above: no matter how many times
+# the endpoint is called, watched-time credit can only grow at the rate real
+# time actually passes, plus one grace window.
+_MIN_INTERVAL_SECONDS = 5
 
 
 def _get_or_create(db: Session, enrollment_id: int, content_item_id: int) -> ContentProgress:
@@ -62,6 +80,16 @@ def record_heartbeat(db: Session, enrollment_id: int, content_item_id: int, clai
     cp = _get_or_create(db, enrollment_id, content_item_id)
     now = datetime.now(timezone.utc)
     elapsed = max(0.0, (now - cp.last_heartbeat_at).total_seconds())
+
+    if elapsed < _MIN_INTERVAL_SECONDS:
+        # Too soon since the last accepted tick to grant any additional
+        # credit — prevents rapid-fire calls (seek+pause cycling in the UI,
+        # or a scripted loop hitting this endpoint directly) from racking up
+        # _GRACE_SECONDS of "free" watched-time on every request. The
+        # anchor (last_heartbeat_at) is deliberately left untouched here:
+        # advancing it would let a burst of rapid calls each buy a fresh
+        # elapsed-time window once enough of them queue up back to back.
+        return cp.max_watched_seconds
 
     bounded_claim = min(max(0, claimed_watched_seconds), cp.max_watched_seconds + elapsed + _GRACE_SECONDS)
     cp.max_watched_seconds = max(cp.max_watched_seconds, int(bounded_claim))

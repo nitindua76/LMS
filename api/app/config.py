@@ -40,6 +40,33 @@ class Settings(BaseSettings):
     MINIO_SECRET_KEY: str = "lmspassword"
     MINIO_BUCKET: str = "lms-packages"
     MINIO_SECURE: bool = False
+    # Browser-facing endpoint for PRESIGNED URLs ONLY — everything else (the
+    # actual upload/download API calls the api container itself makes)
+    # keeps using MINIO_ENDPOINT above, which is the internal Docker Compose
+    # service name ("minio:9000") and is correctly unreachable from outside
+    # the compose network.
+    #
+    # Presigned URLs are different: they're handed straight to the browser
+    # (as a <video>/<iframe> src=), so if they're signed against the
+    # internal hostname, the browser tries to resolve "minio:9000" itself
+    # and fails outright — that hostname only exists on the Docker network.
+    # Confirmed via a real presigned-URL request against the running MinIO
+    # container: the generated URL's host was literally "minio:9000".
+    #
+    # Left blank by default (dev/demo default, STORAGE_BACKEND=local never
+    # reads this at all) — set only in production, to the same
+    # Caddy-fronted public hostname:port already used for LiveKit signaling
+    # (see docker-compose.prod.yml + Caddyfile), so the signature's "host"
+    # claim matches what the browser actually connects to. Caddy passes the
+    # Host header through unmodified by default, which is what makes a URL
+    # signed for the public host still validate once MinIO receives it —
+    # verified directly against the real MinIO container before relying on
+    # this behavior.
+    MINIO_PUBLIC_ENDPOINT: str = ""
+    # Scheme used only for the public-endpoint signing above (Caddy
+    # terminates TLS there, so this is normally true in production even
+    # though MINIO_SECURE for the internal endpoint stays false).
+    MINIO_PUBLIC_SECURE: bool = True
 
     # Content origin (separate origin for SCORM/cmi5 package serving)
     CONTENT_ORIGIN: str = "http://content.local:5174"

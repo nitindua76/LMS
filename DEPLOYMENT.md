@@ -91,6 +91,129 @@ powershell -File scripts\deploy.ps1
 To trigger a CI deploy without a new commit (redeploy the current `main` as-is):
 GitHub repo → **Actions** → *Build and Deploy* → **Run workflow**.
 
+## Moving production to a different VM
+
+If the production deployment needs to move to a different physical/virtual
+machine (new hardware, different network segment, etc.), the app tier
+(api/web images, Caddy config) is stateless and just needs a normal fresh
+deploy on the new VM — the only real work is moving the DATA: the Postgres
+database and the MinIO object storage (uploaded videos/PDFs/SCORM
+packages). Two scripts handle this:
+
+### On the OLD VM (source)
+
+```powershell
+powershell -File scripts\export-for-migration.ps1
+```
+
+Produces a timestamped folder (`lms-migration-<timestamp>\`) containing a
+Postgres dump, a tarball of the MinIO volume, and a manifest — everything
+needed to reconstruct the data, nothing else (no secrets, no `.env.prod`,
+no TLS keys). Copy that whole folder to the new VM over your internal
+network/file share — never over the public internet, it contains real
+employee data.
+
+### On the NEW VM (target)
+
+1. Complete DEPLOYMENT.md steps 1-3 above as normal (checkout, hostname,
+   `setup-prod-vm.ps1` with a filled-in `.env.prod` for the NEW VM — new
+   secrets are fine and recommended, they don't need to match the old
+   VM's). This brings up an empty stack with a fresh schema/bucket.
+2. Copy the exported `lms-migration-<timestamp>\` folder onto this VM.
+3. Run:
+   ```powershell
+   powershell -File scripts\import-migration.ps1 -ExportPath "C:\path\to\lms-migration-<timestamp>" -Confirm
+   ```
+   This is destructive to whatever's currently in the new VM's database/
+   object storage (expected — it's meant to replace the empty just-bootstrapped
+   state), which is why `-Confirm` is required. It stops api/web, restores
+   Postgres, restores MinIO, restarts everything, and runs migrations.
+4. Continue with steps 4-5 above (self-hosted runner, root CA distribution)
+   on the new VM if not already done.
+5. Point `INTERNAL_HOSTNAME`'s DNS record (or everyone's hosts file entries)
+   at the new VM's IP, and decommission the old VM once verified.
+
+Both scripts were verified end-to-end against real isolated Docker Compose
+projects (separate project names/volumes, never touching a live
+deployment) before being relied on here: seeded a real Postgres row and a
+real MinIO object, exported, imported into a second isolated stack, and
+confirmed both came through correctly.
+
+## Running dev and prod concurrently on one machine
+
+If this same machine is used for both development (`docker-compose.yml`)
+and production (`docker-compose.prod.yml`) — a single-VM setup, no
+separate prod hardware — both stacks can run side by side without
+interfering, as long as this file's defaults are used as-is. This was
+verified end-to-end on this exact host: brought up real containers from
+both compose files simultaneously, confirmed zero port/volume/container
+name collisions, and confirmed traffic actually routes correctly through
+Caddy end-to-end (not just that ports happen to be open).
+
+### Why the prod ports don't look like LiveKit's/Caddy's usual defaults
+
+Two independent problems, both real and specific to running both stacks on
+one machine (or in this case, specific to this Windows host at all):
+
+1. **Port collision with dev.** `docker-compose.yml` (dev) already
+   publishes `7880` (LiveKit signaling, via the dev nginx TLS proxy),
+   `7881` (LiveKit RTC TCP fallback), `55000-55100/udp` (LiveKit RTC media),
+   and `5175` (SCORM content origin) directly on the host. If prod used
+   those same numbers, whichever stack started second would fail to bind.
+2. **This host's own Windows port reservations.** Independent of dev
+   entirely: `netsh interface ipv4 show excludedportrange protocol=tcp`
+   confirmed port `443` — LiveKit's/Caddy's conventional HTTPS port — falls
+   inside a Windows-reserved TCP exclusion range on this machine. Docker
+   Desktop cannot bind it here at all, dev or no dev. Port `5174` (prod's
+   original hardcoded content-origin port) was found to be in the same
+   situation — both excluded AND already occupied by another process. This
+   would have been a problem for a prod-only deployment on this exact
+   machine too.
+
+If production ever moves to its **own dedicated machine** (see "Moving
+production to a different VM" above) with no dev stack and without this
+particular Windows host's port reservations, it's safe to override these
+back to the more conventional 443/7880/7881/55000-55100/5174 via
+`.env.prod` — nothing in the app depends on the specific numbers below,
+they're just what avoids collisions on THIS shared machine.
+
+### Full port map
+
+| Purpose                          | Dev (`docker-compose.yml`) | Prod (`docker-compose.prod.yml`, default) |
+|-----------------------------------|----------------------------|--------------------------------------------|
+| Main app (HTTPS)                  | `5173`                     | `${PROD_HTTPS_PORT}` → **8543**             |
+| API (HTTPS, direct)                | `8000`                     | *(no separate port — prod's `web` image proxies `/api/` internally to `api:8000`, see `web/nginx.conf`)* |
+| SCORM/cmi5 content origin         | `5175`                     | `${PROD_CONTENT_PORT}` → **8174**           |
+| LiveKit signaling (wss://)         | `7880`                     | `${PROD_LIVEKIT_WSS_PORT}` → **8780**       |
+| LiveKit RTC (TCP fallback)         | `7881`                     | `${PROD_LIVEKIT_RTC_TCP_PORT}` → **8781**   |
+| LiveKit RTC media (UDP range)      | `55000-55100`              | `${LIVEKIT_RTC_PORT_RANGE_START}`–`${LIVEKIT_RTC_PORT_RANGE_END}` → **56000-56100** |
+| MinIO (presigned URLs, HTTPS)      | *(not applicable — dev uses `STORAGE_BACKEND=local`)* | `${PROD_MINIO_PUBLIC_PORT}` → **9002** |
+| Postgres, Redis, LRS, Mailpit      | published directly (`5437`/`6380`/`9090`/`8025`) for local debugging | not published to the host at all |
+
+Every prod port above is a `.env.prod` variable with the shown default —
+override any of them there if a different number is needed (e.g. one of
+these also happens to collide with something else already running on a
+given machine). `docker-compose.prod.yml` also sets an explicit top-level
+`name: lms-prod`, so its containers/volumes/network (`lms-prod-*`,
+`lms-prod_*`) never collide with dev's default project name (`lms`,
+derived from the folder name) even though both stacks live in the same
+repo checkout.
+
+### Verifying this on a new machine
+
+Before relying on this in a real dev+prod-concurrent deployment, confirm
+this machine doesn't have its own additional port reservations:
+
+```powershell
+netsh interface ipv4 show excludedportrange protocol=tcp
+netsh interface ipv4 show excludedportrange protocol=udp
+```
+
+If any of the prod defaults above fall inside an excluded range (or are
+already bound by something else via `Get-NetTCPConnection -State Listen`),
+override that specific `.env.prod` variable to a free, non-excluded port
+before running `scripts\setup-prod-vm.ps1` / `scripts\deploy.ps1`.
+
 ## Known gaps / things to revisit later
 
 - **Secrets already in git**: `.env` (dev secrets) is currently tracked in

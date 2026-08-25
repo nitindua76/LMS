@@ -7,8 +7,16 @@
 # internal HTTPS without public DNS, and it's required: camera/mic access
 # for live sessions only works in a secure context (HTTPS, or literally
 # "localhost") — plain http:// on an internal hostname/IP silently blocks it.
+#
+# Ports are env-driven (PROD_HTTPS_PORT etc, defaulted below via Caddy's own
+# {$VAR:default} syntax) rather than hardcoded 443/7880/9002 — this machine
+# also runs docker-compose.yml (dev) concurrently, which already occupies
+# 7880, and separately, port 443 itself falls inside this host's own
+# Windows-reserved TCP port exclusion range and cannot be bound at all
+# here regardless of dev. See DEPLOYMENT.md's "Running dev and prod
+# concurrently" section and docker-compose.prod.yml's caddy service.
 
-{$INTERNAL_HOSTNAME} {
+{$INTERNAL_HOSTNAME}:{$PROD_HTTPS_PORT:8543} {
 	tls internal
 	reverse_proxy web:80
 }
@@ -17,7 +25,19 @@
 # terminates wss:// here and proxies plain ws to the livekit container.
 # Media (UDP) never goes through Caddy — see docker-compose.prod.yml, it's
 # published directly from the livekit service.
-{$INTERNAL_HOSTNAME}:7880 {
+{$INTERNAL_HOSTNAME}:{$PROD_LIVEKIT_WSS_PORT:8780} {
 	tls internal
 	reverse_proxy livekit:7880
+}
+
+# MinIO — own port, same reasoning as LiveKit above: presigned video/PDF
+# URLs are handed straight to the browser as <video>/<iframe> src=, so they
+# need a host:port the browser can actually reach. Caddy passes the Host
+# header through to the backend unmodified by default, which is exactly
+# what makes a URL signed for THIS public host:port still validate once
+# MinIO receives it (verified directly against a real MinIO instance
+# before relying on this). Must match MINIO_PUBLIC_ENDPOINT in .env.prod.
+{$INTERNAL_HOSTNAME}:{$PROD_MINIO_PUBLIC_PORT:9002} {
+	tls internal
+	reverse_proxy minio:9000
 }

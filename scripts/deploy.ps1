@@ -1,4 +1,4 @@
-# Deploys/updates the production stack on this VM. Run manually for the
+﻿# Deploys/updates the production stack on this VM. Run manually for the
 # first-ever deploy; after that, the self-hosted GitHub Actions runner on
 # this same VM calls this script automatically after every push to main
 # (see .github/workflows/deploy.yml).
@@ -29,6 +29,11 @@ Write-Host "Rendering livekit/livekit.prod.yaml from template..."
 $nodeIp = Get-EnvValue "LIVEKIT_NODE_IP"
 $rtcStart = Get-EnvValue "LIVEKIT_RTC_PORT_RANGE_START"
 $rtcEnd = Get-EnvValue "LIVEKIT_RTC_PORT_RANGE_END"
+# Defaults to 8781 (not LiveKit's usual 7881) — this machine also runs
+# docker-compose.yml (dev) concurrently, which already publishes 7881
+# directly; see DEPLOYMENT.md's "Running dev and prod concurrently".
+$rtcTcpPort = Get-EnvValue "PROD_LIVEKIT_RTC_TCP_PORT"
+if (-not $rtcTcpPort) { $rtcTcpPort = "8781" }
 $lkKey = Get-EnvValue "LIVEKIT_API_KEY"
 $lkSecret = Get-EnvValue "LIVEKIT_API_SECRET"
 
@@ -41,6 +46,7 @@ if (-not $nodeIp -or -not $lkKey -or -not $lkSecret) {
     -replace "__NODE_IP__", $nodeIp `
     -replace "__RTC_PORT_RANGE_START__", $rtcStart `
     -replace "__RTC_PORT_RANGE_END__", $rtcEnd `
+    -replace "__RTC_TCP_PORT__", $rtcTcpPort `
     -replace "__LIVEKIT_KEY__", $lkKey `
     -replace "__LIVEKIT_SECRET__", $lkSecret `
     | Set-Content "livekit/livekit.prod.yaml"

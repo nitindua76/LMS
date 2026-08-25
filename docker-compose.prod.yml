@@ -5,13 +5,29 @@
 #   - Caddy terminates TLS (self-issued "internal" cert — see Caddyfile and
 #     DEPLOYMENT.md for distributing its root CA to client machines) instead
 #     of every service being reachable in plaintext on its own host port.
-#   - db/redis/minio/lrs are NOT published to the host at all — only
-#     reachable from other containers on the compose network.
+#   - db/redis/lrs are NOT published to the host at all — only reachable
+#     from other containers on the compose network. minio is the one
+#     exception: it's reachable internally (minio:9000, used for every
+#     actual upload/download call the api makes) AND fronted by Caddy on
+#     its own TLS port (default 9002, see Caddyfile) — that second path
+#     exists purely so browser-facing presigned video/PDF URLs resolve to
+#     something outside the compose network can reach; MinIO's storage
+#     port itself is still never exposed unproxied.
 #   - No Mailpit — point SMTP_HOST/SMTP_PORT at a real internal mail relay
 #     via .env.prod.
 #
+# Explicit project name (below) so this stack's containers/volumes/network
+# never collide with docker-compose.yml (dev)'s default "lms" project when
+# both run on the same machine — see DEPLOYMENT.md's "Running dev and prod
+# concurrently" section. Every externally-published port is parameterized
+# via .env.prod (defaults chosen to avoid both dev's own ports AND this
+# host's real Windows-reserved port exclusions — confirmed via `netsh
+# interface ipv4 show excludedportrange`, notably 443 and 5174 are BOTH
+# excluded on this machine and would silently fail to bind).
+#
 # Usage: docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
 # (scripts/deploy.ps1 wraps this + pull + migrate + prune).
+name: lms-prod
 
 services:
   db:
@@ -66,7 +82,13 @@ services:
       # the SCORM/cmi5 content origin, which by design never carries the
       # session cookie (see main.py's CORS comments) — it doesn't need TLS
       # the way the main app does.
-      - "5174:80"
+      #
+      # Default changed from 5174 to 8174 — 5174 is BOTH inside this host's
+      # Windows-reserved TCP exclusion range AND already occupied by
+      # another process (confirmed via `netsh interface ipv4 show
+      # excludedportrange protocol=tcp` + `Get-NetTCPConnection`), so it
+      # would silently fail to bind here regardless of dev/prod coexistence.
+      - "${PROD_CONTENT_PORT:-8174}:80"
     restart: unless-stopped
 
   lrs:
@@ -91,11 +113,30 @@ services:
     environment:
       LIVEKIT_KEYS: "${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}"
     ports:
-      - "7881:7881"   # RTC over TCP (fallback)
-      - "${LIVEKIT_RTC_PORT_RANGE:-55000-55100}:${LIVEKIT_RTC_PORT_RANGE:-55000-55100}/udp"
-      # 7880 (signaling) intentionally NOT published directly — Caddy
-      # terminates TLS for it (see Caddyfile) and reaches it over the
-      # internal compose network instead.
+      # Defaults changed from 7881 / 55000-55100 to 8781 / 56000-56100 —
+      # docker-compose.yml (dev) already publishes 7881 and the full
+      # 55000-55100 UDP range directly on this same host; reusing either
+      # here would fail to bind (or worse, silently bind to whichever
+      # stack started last) if both run concurrently. See
+      # DEPLOYMENT.md's "Running dev and prod concurrently" section.
+      - "${PROD_LIVEKIT_RTC_TCP_PORT:-8781}:${PROD_LIVEKIT_RTC_TCP_PORT:-8781}"   # RTC over TCP (fallback)
+      # NOTE: built from LIVEKIT_RTC_PORT_RANGE_START/_END (the existing,
+      # already-established .env.prod vars — see .env.prod.example), not a
+      # single combined var. The previous version of this line read
+      # ${LIVEKIT_RTC_PORT_RANGE}, which .env.prod(.example) never actually
+      # defines, so it always silently fell back to the hardcoded default
+      # regardless of what was configured there. Fixed here.
+      #
+      # Host and container ports MUST match exactly (both sides of the
+      # colon identical) — LiveKit advertises this same port number to
+      # clients as the ICE candidate address (see livekit.prod.yaml.template's
+      # node_ip comment); an asymmetric host:container mapping here would
+      # make LiveKit tell clients to connect to a port that isn't actually
+      # the one Docker published, breaking media negotiation silently.
+      - "${LIVEKIT_RTC_PORT_RANGE_START:-56000}-${LIVEKIT_RTC_PORT_RANGE_END:-56100}:${LIVEKIT_RTC_PORT_RANGE_START:-56000}-${LIVEKIT_RTC_PORT_RANGE_END:-56100}/udp"
+      # Signaling port (default 8780, see Caddyfile) intentionally NOT
+      # published directly here — Caddy terminates TLS for it and reaches
+      # it over the internal compose network instead.
     depends_on:
       redis:
         condition: service_healthy
@@ -109,16 +150,17 @@ services:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       REDIS_URL: redis://redis:6379/0
       MINIO_ENDPOINT: minio:9000
-      CONTENT_ORIGIN: http://${INTERNAL_HOSTNAME}:5174
-      API_EXTERNAL_URL: https://${INTERNAL_HOSTNAME}
+      MINIO_PUBLIC_ENDPOINT: ${INTERNAL_HOSTNAME}:${PROD_MINIO_PUBLIC_PORT:-9002}
+      CONTENT_ORIGIN: http://${INTERNAL_HOSTNAME}:${PROD_CONTENT_PORT:-8174}
+      API_EXTERNAL_URL: https://${INTERNAL_HOSTNAME}:${PROD_HTTPS_PORT:-8543}
       LRS_ENDPOINT: http://lrs:9090
       STORAGE_BACKEND: minio
-      LIVEKIT_URL: wss://${INTERNAL_HOSTNAME}:7880
+      LIVEKIT_URL: wss://${INTERNAL_HOSTNAME}:${PROD_LIVEKIT_WSS_PORT:-8780}
       LIVEKIT_SERVER_URL: http://livekit:7880
       ENVIRONMENT: production
       COOKIE_SECURE: "true"
       COOKIE_SAMESITE: "strict"
-      CORS_ORIGINS: https://${INTERNAL_HOSTNAME}
+      CORS_ORIGINS: https://${INTERNAL_HOSTNAME}:${PROD_HTTPS_PORT:-8543}
     depends_on:
       db:
         condition: service_healthy
@@ -142,14 +184,24 @@ services:
   caddy:
     image: caddy:2-alpine
     ports:
-      - "443:443"
-      - "7880:7880"   # LiveKit signaling (wss://) — TLS terminated here, proxied to livekit:7880 plain ws
+      # Defaults changed from 443/7880 to 8543/8780 — port 443 is inside
+      # this host's Windows-reserved TCP exclusion range (confirmed via
+      # `netsh interface ipv4 show excludedportrange protocol=tcp`) and
+      # Docker Desktop cannot bind it here at all, dev/prod coexistence
+      # aside; 7880 collides with dev's own LiveKit-signaling port. See
+      # DEPLOYMENT.md's "Running dev and prod concurrently" section.
+      - "${PROD_HTTPS_PORT:-8543}:${PROD_HTTPS_PORT:-8543}"
+      - "${PROD_LIVEKIT_WSS_PORT:-8780}:${PROD_LIVEKIT_WSS_PORT:-8780}"   # LiveKit signaling (wss://) — TLS terminated here, proxied to livekit:7880 plain ws
+      - "${PROD_MINIO_PUBLIC_PORT:-9002}:${PROD_MINIO_PUBLIC_PORT:-9002}"   # MinIO presigned video/PDF URLs (https://) — TLS terminated here, proxied to minio:9000
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
     environment:
       INTERNAL_HOSTNAME: ${INTERNAL_HOSTNAME}
+      PROD_HTTPS_PORT: ${PROD_HTTPS_PORT:-8543}
+      PROD_LIVEKIT_WSS_PORT: ${PROD_LIVEKIT_WSS_PORT:-8780}
+      PROD_MINIO_PUBLIC_PORT: ${PROD_MINIO_PUBLIC_PORT:-9002}
     depends_on:
       - web
       - api

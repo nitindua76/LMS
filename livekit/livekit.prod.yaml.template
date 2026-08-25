@@ -1,9 +1,20 @@
 # Template — scripts/deploy.ps1 substitutes __NODE_IP__, __LIVEKIT_KEY__,
-# and __LIVEKIT_SECRET__ from .env.prod and writes the result to
-# livekit.prod.yaml (git-ignored; never commit the real keys).
+# __LIVEKIT_SECRET__, and __RTC_TCP_PORT__ from .env.prod and writes the
+# result to livekit.prod.yaml (git-ignored; never commit the real keys).
+#
+# `port: 7880` below is this CONTAINER's internal signaling port — never
+# published directly to the host in prod (Caddy reaches it over the
+# compose network as livekit:7880, see docker-compose.prod.yml), so it
+# does not need to change for dev/prod coexistence and is left as-is.
 port: 7880
 rtc:
-  tcp_port: 7881
+  # Directly published to the host (see docker-compose.prod.yml's livekit
+  # service) — MUST match ${PROD_LIVEKIT_RTC_TCP_PORT} there exactly, since
+  # this is also the port LiveKit advertises to clients as a TCP ICE
+  # candidate. Templated (not hardcoded 7881) because docker-compose.yml
+  # (dev) already publishes 7881 directly on this same host when both run
+  # concurrently — see DEPLOYMENT.md's "Running dev and prod concurrently".
+  tcp_port: __RTC_TCP_PORT__
   port_range_start: __RTC_PORT_RANGE_START__
   port_range_end: __RTC_PORT_RANGE_END__
   use_external_ip: false

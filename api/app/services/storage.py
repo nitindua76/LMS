@@ -51,6 +51,28 @@ class MinIOBackend(StorageBackend):
             region_name="us-east-1",
         )
 
+    def _public_client(self):
+        """
+        Same credentials/signature scheme as _client(), but pointed at
+        MINIO_PUBLIC_ENDPOINT — used ONLY for generate_presigned_url, never
+        for actual upload/download traffic (that always goes over the
+        internal endpoint via _client()). See config.py's MINIO_PUBLIC_ENDPOINT
+        docstring for why presigned URLs specifically need a different host
+        than every other MinIO call this backend makes.
+        """
+        import boto3
+        from botocore.config import Config
+        from app.config import settings
+        scheme = "https" if settings.MINIO_PUBLIC_SECURE else "http"
+        return boto3.client(
+            "s3",
+            endpoint_url=f"{scheme}://{settings.MINIO_PUBLIC_ENDPOINT}",
+            aws_access_key_id=settings.MINIO_ACCESS_KEY,
+            aws_secret_access_key=settings.MINIO_SECRET_KEY,
+            config=Config(signature_version="s3v4"),
+            region_name="us-east-1",
+        )
+
     def _bucket(self) -> str:
         from app.config import settings
         return settings.MINIO_BUCKET
@@ -81,7 +103,12 @@ class MinIOBackend(StorageBackend):
         return buf.getvalue()
 
     def signed_url(self, key: str, expires: int = 3600) -> str:
-        return self._client().generate_presigned_url(
+        from app.config import settings
+        # MINIO_PUBLIC_ENDPOINT unset (the default, and what dev/demo runs
+        # with) — behaves exactly as before this change: signs against the
+        # same internal endpoint used everywhere else.
+        client = self._public_client() if settings.MINIO_PUBLIC_ENDPOINT else self._client()
+        return client.generate_presigned_url(
             "get_object",
             Params={"Bucket": self._bucket(), "Key": key},
             ExpiresIn=expires,

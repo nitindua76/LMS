@@ -267,9 +267,10 @@ export default function SectionPlayer() {
       return;
     }
 
+    const itemUrl = item.url;
     const fetchManifest = async () => {
       try {
-        const urlObj = new URL(item.url);
+        const urlObj = new URL(itemUrl);
         const contentOrigin = urlObj.origin;
         const manifestUrl = `${contentOrigin}/pkg/${item.id}/imsmanifest.xml`;
 

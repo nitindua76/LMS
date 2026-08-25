@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   coursesApi, sectionsApi, contentApi, quizzesApi,
   disciplinesApi, levelsApi, packagesApi,
-  Section, ContentItem, Quiz, Question,
+  Section, ContentItem, Quiz, Question, CourseTarget,
 } from "../../api/admin";
 import { getErrorMessage } from "../../api/client";
 import MeetingSessionPanel from "../../components/MeetingSessionPanel";
@@ -130,6 +130,7 @@ export default function CourseDetail() {
   });
 
   const handleBulkAdd = async () => {
+    if (!course) return;
     const checkedDiscs = Object.entries(selectedDisciplines).filter(([_, val]) => val).map(([id]) => Number(id));
     const checkedLvls = Object.entries(selectedLevels).filter(([_, val]) => val).map(([id]) => Number(id));
     if (checkedDiscs.length === 0 || checkedLvls.length === 0) return;
@@ -160,7 +161,7 @@ export default function CourseDetail() {
   };
 
   const handleTargetEveryone = async () => {
-    if (!disciplines || !levels) return;
+    if (!disciplines || !levels || !course) return;
     setBulkPending(true);
     setErr("");
     const existingCombos = new Set(course.targets.map(t => `${t.discipline_id}-${t.level_id}`));
@@ -185,6 +186,7 @@ export default function CourseDetail() {
   };
 
   const handleClearAllTargets = async () => {
+    if (!course) return;
     if (!confirm("Are you sure you want to clear all assignment targets?")) return;
     setBulkPending(true);
     setErr("");
@@ -199,7 +201,7 @@ export default function CourseDetail() {
     }
   };
 
-  const handleRemoveDisciplineGroup = async (targetList: typeof course.targets) => {
+  const handleRemoveDisciplineGroup = async (targetList: CourseTarget[]) => {
     if (!confirm("Are you sure you want to remove all targets for this department?")) return;
     setBulkPending(true);
     setErr("");
@@ -790,6 +792,7 @@ function QuizSection({ courseId, sectionId, onError }: { courseId: number; secti
   const addQuestionMut = useMutation({
     mutationFn: () => quizzesApi.createQuestion(courseId, sectionId, {
       ...qForm,
+      type: qForm.type as Question["type"],
       order_index: (quiz?.questions.length ?? 0) + 1,
       options: qForm.options.map((o, i) => ({ order_index: i + 1, text: o.text, is_correct: o.is_correct })),
     }),

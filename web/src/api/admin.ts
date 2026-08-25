@@ -431,9 +431,14 @@ export const quizzesApi = {
     client.put<Quiz>(`/admin/courses/${courseId}/sections/${sectionId}/quiz`, data).then((r) => r.data),
   delete: (courseId: number, sectionId: number) =>
     client.delete(`/admin/courses/${courseId}/sections/${sectionId}/quiz`),
-  createQuestion: (courseId: number, sectionId: number, data: Partial<Question & { options: Partial<Option>[] }>) =>
+  // Omit<Question, "options"> before intersecting — Question & { options: ... }
+  // would instead INTERSECT the two "options" property types (Option[] &
+  // Partial<Option>[]), not override it, which rejected every real caller's
+  // payload of freshly-built options (no id/question_id yet) with a
+  // confusing "missing properties: id, question_id" error.
+  createQuestion: (courseId: number, sectionId: number, data: Partial<Omit<Question, "options">> & { options: Partial<Option>[] }) =>
     client.post<Question>(`/admin/courses/${courseId}/sections/${sectionId}/quiz/questions`, data).then((r) => r.data),
-  updateQuestion: (courseId: number, sectionId: number, qId: number, data: Partial<Question & { options: Partial<Option>[] }>) =>
+  updateQuestion: (courseId: number, sectionId: number, qId: number, data: Partial<Omit<Question, "options">> & { options: Partial<Option>[] }) =>
     client.put<Question>(`/admin/courses/${courseId}/sections/${sectionId}/quiz/questions/${qId}`, data).then((r) => r.data),
   deleteQuestion: (courseId: number, sectionId: number, qId: number) =>
     client.delete(`/admin/courses/${courseId}/sections/${sectionId}/quiz/questions/${qId}`),

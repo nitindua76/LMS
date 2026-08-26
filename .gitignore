@@ -6,6 +6,12 @@
 # TLS certificate/private key — never commit
 ssl/
 
+# nginx config — machine-specific (office uses TLS certs, dev uses no nginx)
+nginx/
+
+# Docker compose override — machine-specific dev settings
+docker-compose.override.yml
+
 # Generated from templates at deploy time (contains real LiveKit keys)
 livekit/livekit.prod.yaml
 
@@ -18,8 +24,12 @@ __pycache__/
 node_modules/
 dist/
 
+# Database dumps
+*.sql
+
 # Editors/OS
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
+package-lock.json

@@ -38,6 +38,17 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    # NOT published by default (see the comment at the top of this file) —
+    # this optional mapping exists purely for local admin/debugging access
+    # (e.g. DBeaver, psql) via a DB client that supports plain TCP, not
+    # HTTPS/TLS termination through Caddy. Default (5438) deliberately
+    # differs from dev's published Postgres port (5437, see
+    # docker-compose.yml) since both stacks can run concurrently on this
+    # host — see DEPLOYMENT.md's "Running dev and prod concurrently".
+    # Leave PROD_POSTGRES_PORT unset in .env.prod to skip publishing this
+    # at all (comment out this ports: block if truly none is wanted).
+    ports:
+      - "${PROD_POSTGRES_PORT:-5438}:5432"
     healthcheck:
       test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER}" ]
       interval: 5s
@@ -94,6 +105,19 @@ services:
   lrs:
     image: python:3.11-slim
     working_dir: /app
+    # Installs its deps at container *start* time (not build time) and only
+    # ever talks to PyPI (external), never another compose service by
+    # hostname — same as docker-compose.yml (dev)'s lrs service, and it
+    # needs the identical proxy passthrough for the identical reason: this
+    # network requires an outbound HTTP(S) proxy to reach the public
+    # internet at all. Confirmed via a real deploy attempt without this —
+    # pip failed with "Temporary failure in name resolution" trying to
+    # resolve pypi.org, blocking lrs's healthcheck and, transitively (via
+    # depends_on), api/web/caddy from ever starting.
+    environment:
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1}
     command: >
       sh -c "pip install fastapi uvicorn --quiet --no-cache-dir && uvicorn main:app --host 0.0.0.0 --port 9090"
     volumes:
@@ -146,10 +170,43 @@ services:
     image: ${REGISTRY:-ghcr.io}/${GITHUB_REPOSITORY:-you/lms}-api:${IMAGE_TAG:-latest}
     env_file:
       - .env.prod
+    # Docker's default embedded DNS forwards to public resolvers, which
+    # have no record of internal-only ONGC hostnames like
+    # appserver1.ongc.co.in's SSO/Employee API — that only resolves
+    # through the corporate AD DNS server. Same fix as docker-compose.yml
+    # (dev)'s api service, for the identical reason — confirmed necessary
+    # via a real login attempt that failed with httpx.ProxyError once the
+    # env vars below were cleared (see that comment), then succeeded once
+    # this DNS override was added too.
+    dns:
+      - ${DNS_SERVER_1:-10.205.55.247}
+      - ${DNS_SERVER_2:-10.205.55.252}
     environment:
+      # env_file above loads .env.prod wholesale, which also includes
+      # HTTP_PROXY/HTTPS_PROXY (needed by the lrs service for pip installs
+      # — see that service's comment). Without this override those leak
+      # into the api container too, and httpx then tries to route SSO/
+      # Employee API calls to appserver1.ongc.co.in (this very host,
+      # reachable directly on the internal network) through the corporate
+      # proxy — which can't resolve it (confirmed via a real failed login:
+      # httpx.ProxyError: 504 Unknown Host). Same fix as docker-compose.yml
+      # (dev)'s api service, for the identical reason.
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      NO_PROXY: ""
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       REDIS_URL: redis://redis:6379/0
       MINIO_ENDPOINT: minio:9000
+      # MUST match the minio service's real MINIO_ROOT_USER/PASSWORD below
+      # — api/app/config.py's MINIO_ACCESS_KEY/MINIO_SECRET_KEY defaults
+      # are "lmsadmin"/"lmspassword" (dev's convenience credentials), and
+      # without this explicit passthrough api silently authenticated
+      # against MinIO with those wrong defaults instead of whatever real
+      # MINIO_ROOT_USER/PASSWORD is set in .env.prod. Confirmed via a real
+      # failed upload: "InvalidAccessKeyId — The Access Key Id you
+      # provided does not exist in our records."
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
       MINIO_PUBLIC_ENDPOINT: ${INTERNAL_HOSTNAME}:${PROD_MINIO_PUBLIC_PORT:-9002}
       CONTENT_ORIGIN: http://${INTERNAL_HOSTNAME}:${PROD_CONTENT_PORT:-8174}
       API_EXTERNAL_URL: https://${INTERNAL_HOSTNAME}:${PROD_HTTPS_PORT:-8543}
@@ -195,6 +252,7 @@ services:
       - "${PROD_MINIO_PUBLIC_PORT:-9002}:${PROD_MINIO_PUBLIC_PORT:-9002}"   # MinIO presigned video/PDF URLs (https://) — TLS terminated here, proxied to minio:9000
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./ssl:/etc/caddy/ssl:ro
       - caddy_data:/data
       - caddy_config:/config
     environment:

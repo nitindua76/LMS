@@ -61,16 +61,23 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
 if ($LASTEXITCODE -ne 0) { throw "docker compose up failed" }
 
 # ── Wait for the api container to be healthy, then run migrations ───────────
+# --env-file on every call below — without it, `docker compose ps`/`exec`
+# still happen to work here (Compose can infer the already-running
+# project from its own local state cache), but they print a noisy
+# "variable not set" warning to stderr for every var only defined in
+# .env.prod, and it's not something to rely on staying true across
+# Compose versions. Confirmed via a real deploy run that hit this exact
+# warning before being fixed here.
 Write-Host "Waiting for api to be ready..."
 $maxAttempts = 30
 for ($i = 0; $i -lt $maxAttempts; $i++) {
-    $status = docker compose -f docker-compose.prod.yml ps api --format json 2>$null | ConvertFrom-Json
+    $status = docker compose -f docker-compose.prod.yml --env-file .env.prod ps api --format json 2>$null | ConvertFrom-Json
     if ($status -and $status.State -eq "running") { break }
     Start-Sleep -Seconds 2
 }
 
 Write-Host "Running database migrations..."
-docker compose -f docker-compose.prod.yml exec -T api alembic upgrade head
+docker compose -f docker-compose.prod.yml --env-file .env.prod exec -T api alembic upgrade head
 if ($LASTEXITCODE -ne 0) { throw "alembic upgrade head failed" }
 
 # ── Clean up old, now-unused image layers so disk doesn't grow unbounded ────

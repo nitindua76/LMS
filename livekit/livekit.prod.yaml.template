@@ -24,6 +24,18 @@ rtc:
   # bug this fixed in dev: docker's own bridge-network IP is NOT reachable
   # from other machines, so this has to be set explicitly.
   node_ip: __NODE_IP__
+# Exposes a Prometheus-format metrics endpoint on this port (GET /metrics)
+# — this is what api/app/services/resource_monitor.py polls to build the
+# admin Resource Monitor page's live bandwidth/CPU/room numbers. Plain
+# HTTP, no auth — deliberately NOT published to the host in
+# docker-compose.prod.yml, only reachable from the api container over the
+# internal compose network. Same block as livekit/livekit.yaml (dev) — this
+# was missing from this template entirely, which meant api's background
+# resource-monitor job silently retried against a connection-refused
+# endpoint every cycle (confirmed via a real deploy's api logs: "Could not
+# reach LiveKit metrics endpoint at http://livekit:6789/metrics").
+prometheus:
+  port: 6789
 redis:
   address: redis:6379
 keys:

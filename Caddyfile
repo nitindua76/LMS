@@ -1,12 +1,15 @@
-# Internal-network TLS — no public DNS/IP, so Caddy issues its own
-# self-signed "internal" certificate instead of requesting one from Let's
-# Encrypt (which needs a real, internet-reachable domain). Browsers on other
-# machines will show a "not trusted" warning until Caddy's root CA is
-# installed on them — see DEPLOYMENT.md for the one-time export/distribute
-# step (via Group Policy or manual install). This is the standard way to do
-# internal HTTPS without public DNS, and it's required: camera/mic access
-# for live sessions only works in a secure context (HTTPS, or literally
-# "localhost") — plain http:// on an internal hostname/IP silently blocks it.
+# TLS using the SAME real wildcard cert (*.ongc.co.in, issued by ONGC's own
+# CA) that docker-compose.yml (dev)'s nginx already uses — see ssl/ONGC2526.crt
+# + ssl/ONGC2526KEY.decrypted.key. This replaces an earlier version of this
+# file that used `tls internal` (Caddy's own self-signed CA), which is the
+# right default when NO real cert is available, but was the wrong choice
+# here — a real, already-trusted cert for this exact hostname already
+# exists, so there's no reason to make browsers show a "not trusted"
+# warning or need Caddy's root CA distributed at all. Using the real cert
+# is required either way: camera/mic access for live sessions only works
+# in a secure context (HTTPS, or literally "localhost"), and browsers
+# don't consider a self-signed-and-untrusted HTTPS connection to be a
+# secure context in that sense until the CA is explicitly trusted.
 #
 # Ports are env-driven (PROD_HTTPS_PORT etc, defaulted below via Caddy's own
 # {$VAR:default} syntax) rather than hardcoded 443/7880/9002 — this machine
@@ -17,7 +20,7 @@
 # concurrently" section and docker-compose.prod.yml's caddy service.
 
 {$INTERNAL_HOSTNAME}:{$PROD_HTTPS_PORT:8543} {
-	tls internal
+	tls /etc/caddy/ssl/ONGC2526.crt /etc/caddy/ssl/ONGC2526KEY.decrypted.key
 	reverse_proxy web:80
 }
 
@@ -26,7 +29,7 @@
 # Media (UDP) never goes through Caddy — see docker-compose.prod.yml, it's
 # published directly from the livekit service.
 {$INTERNAL_HOSTNAME}:{$PROD_LIVEKIT_WSS_PORT:8780} {
-	tls internal
+	tls /etc/caddy/ssl/ONGC2526.crt /etc/caddy/ssl/ONGC2526KEY.decrypted.key
 	reverse_proxy livekit:7880
 }
 
@@ -38,6 +41,6 @@
 # MinIO receives it (verified directly against a real MinIO instance
 # before relying on this). Must match MINIO_PUBLIC_ENDPOINT in .env.prod.
 {$INTERNAL_HOSTNAME}:{$PROD_MINIO_PUBLIC_PORT:9002} {
-	tls internal
+	tls /etc/caddy/ssl/ONGC2526.crt /etc/caddy/ssl/ONGC2526KEY.decrypted.key
 	reverse_proxy minio:9000
 }

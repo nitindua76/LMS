@@ -29,7 +29,7 @@ from app.routers.admin.rooms import router as admin_rooms_router
 from app.routers.admin.resource_usage import router as admin_resource_usage_router
 
 app = FastAPI(
-    title="LMS API v2",
+    title="LMS API",
     version="1.0.0",
     docs_url="/docs" if settings.ENVIRONMENT != "production" else None,
     redoc_url="/redoc" if settings.ENVIRONMENT != "production" else None,

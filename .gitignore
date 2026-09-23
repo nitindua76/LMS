@@ -6,10 +6,9 @@
 # TLS certificate/private key — never commit
 ssl/
 
-# nginx config — machine-specific (office uses TLS certs, dev uses no nginx)
-nginx/
-
 # Docker compose override — machine-specific dev settings
+# (nginx is bypassed here via the 'tls' profile; the office machine still
+#  uses nginx/nginx.conf, which IS tracked in git and shared between machines)
 docker-compose.override.yml
 
 # Generated from templates at deploy time (contains real LiveKit keys)
